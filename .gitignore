@@ -18,5 +18,3 @@ tools/*.mp4
 bleurt-master/
 BLEURT-20/
 *.pyc
-stgcn_layers/
-external_metrics
