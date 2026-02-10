@@ -440,7 +440,18 @@ def set_seed(seed):
     cudnn.benchmark = False # Since the input dim is dynamic.
 
 def get_args_parser():
+    
     parser = argparse.ArgumentParser('Uni-Sign scripts', add_help=False)
+    
+    # ============ 描述参数 ============
+    parser.add_argument('--use_descriptions', action='store_true',
+                       help='Use descriptions ') # 是否使用描述
+    parser.add_argument('--desc_encoder_layers', type=int, default=2,
+                       help='transformer layers  description encoder') #编码器层数
+    parser.add_argument('--desc_fusion_weight', type=float, default=0.5,
+                       help='Initial weight description fusion ') # 融合权重
+    # ==========================================
+    
     parser.add_argument('--batch-size', default=16, type=int)
     parser.add_argument('--gradient-accumulation-steps', default=8, type=int)
     parser.add_argument('--gradient-clipping', default=1., type=float)

@@ -15,4 +15,8 @@ log/
 *.mp4
 tools/*.jpg
 tools/*.mp4
-pre_training.py
+bleurt-master/
+BLEURT-20/
+*.pyc
+stgcn_layers/
+external_metrics
