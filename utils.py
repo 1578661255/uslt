@@ -440,18 +440,7 @@ def set_seed(seed):
     cudnn.benchmark = False # Since the input dim is dynamic.
 
 def get_args_parser():
-    
     parser = argparse.ArgumentParser('Uni-Sign scripts', add_help=False)
-    
-    # ============ 描述参数 ============
-    parser.add_argument('--use_descriptions', action='store_true',
-                       help='Use descriptions ') # 是否使用描述
-    parser.add_argument('--desc_encoder_layers', type=int, default=2,
-                       help='transformer layers  description encoder') #编码器层数
-    parser.add_argument('--desc_fusion_weight', type=float, default=0.5,
-                       help='Initial weight description fusion ') # 融合权重
-    # ==========================================
-    
     parser.add_argument('--batch-size', default=16, type=int)
     parser.add_argument('--gradient-accumulation-steps', default=8, type=int)
     parser.add_argument('--gradient-clipping', default=1., type=float)
@@ -544,5 +533,15 @@ def get_args_parser():
 
     # online inference
     parser.add_argument("--online_video", default="", type=str)
+    
+    # Stage 3 多模态融合参数
+    parser.add_argument("--use_descriptions", action='store_true',
+                        help='启用文本描述多模态融合（Stage 3）')
+    parser.add_argument("--text_dropout_p", type=float, default=0.1,
+                        help='文本描述的 dropout 概率，用于训练时的正则化')
+    parser.add_argument("--text_encoder_freeze", action='store_true',
+                        help='冻结 TextEncoder 的参数（仅进行推理）')
+    parser.add_argument("--fusion_checkpoint", default="", type=str,
+                        help='多模态融合模块的检查点路径（可选）')
 
     return parser

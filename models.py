@@ -12,6 +12,7 @@ from deformable_attention_2d import DeformableAttention2D
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
+from text_fusion_modules import TextEncoder, GatingFusion, LearnableMaskEmbedding
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
@@ -70,6 +71,21 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
 class Uni_Sign(nn.Module):
+    """
+    
+    
+    功能：
+        - 姿态特征提取（使用 STGCN）
+        - RGB 支持（可选）
+        - 多模态融合（Stage 3：文本描述融合）
+        - mT5 基础的序列到序列翻译
+    
+    架构组件：
+        1. 姿态分支：多个 GCN 模块处理不同身体部位
+        2. RGB 分支（可选）：可变形注意力融合
+        3. 文本分支（可选）：mT5 编码器 + Gating 融合
+        4. 翻译头：mT5 解码器生成目标文本
+    """
     def __init__(self, args):
         super(Uni_Sign, self).__init__()
         self.args = args
@@ -138,6 +154,28 @@ class Uni_Sign(nn.Module):
 
         self.mt5_model = MT5ForConditionalGeneration.from_pretrained(mt5_path)
         self.mt5_tokenizer = T5Tokenizer.from_pretrained(mt5_path, legacy=False)
+        
+        # 初始化多模态融合模块（Stage 3）
+        self.use_descriptions = getattr(args, 'use_descriptions', False)
+        if self.use_descriptions:
+            # 文本编码器（mT5-base，冻结推理）
+            self.text_encoder = TextEncoder(model_name='google/mt5-base')
+            
+            # 文本特征维度
+            self.text_feature_dim = 768
+            
+            # 融合模块（学习权重融合）
+            self.gating_fusion = GatingFusion(
+                pose_feature_dim=768,
+                text_feature_dim=self.text_feature_dim,
+                hidden_dim=768
+            )
+            
+            # 缺失描述处理（可学习的占位符）
+            self.mask_embedding = LearnableMaskEmbedding(dim=self.text_feature_dim)
+            
+            # 文本 Dropout（防止过拟合）
+            self.text_dropout_p = getattr(args, 'text_dropout_p', 0.1)
     
         
     def _init_weights(self, m):
@@ -150,8 +188,7 @@ class Uni_Sign(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def maybe_autocast(self, dtype=torch.float32):
-        # if on cpu, don't use autocast
-        # if on gpu, use autocast with dtype if provided, otherwise use torch.float16
+        # GPU 上使用自动混合精度，CPU 上禁用
         # enable_autocast = self.device != torch.device("cpu")
         enable_autocast = True
 
@@ -159,8 +196,66 @@ class Uni_Sign(nn.Module):
             return torch.cuda.amp.autocast(dtype=dtype)
         else:
             return contextlib.nullcontext()
+    
+    def _encode_descriptions(self, descriptions, has_description, device):
+        """
+        编码文本描述为特征向量
+        
+        参数：
+            descriptions: List[List[str or None]]，形状为 (batch_size, sequence_length)
+            has_description: List[List[int]]，缺失指示符 (1=有描述, 0=缺失)
+            device: 设备（CPU/GPU）
+        
+        返回：
+            text_features: Tensor，形状为 (batch_size, sequence_length, text_feature_dim)
+        """
+        batch_size = len(descriptions)
+        seq_len = len(descriptions[0]) if descriptions else 0
+        
+        # 初始化输出特征张量
+        text_features = torch.zeros(batch_size, seq_len, self.text_feature_dim, device=device)
+        
+        for b in range(batch_size):
+            for t in range(seq_len):
+                # 检查是否有真实描述
+                if has_description[b][t] == 1 and descriptions[b][t] is not None:
+                    # 编码真实描述
+                    desc_text = descriptions[b][t]
+                    with torch.no_grad():
+                        desc_feature = self.text_encoder(desc_text)
+                    text_features[b, t] = desc_feature.squeeze(0)
+                else:
+                    # 使用可学习的缺失占位符
+                    text_features[b, t] = self.mask_embedding()
+        
+        return text_features
+    
+    def _apply_text_dropout(self, text_features, has_description, dropout_p):
+        """
+        应用文本 Dropout （防止过拟合）
+        
+        参数：
+            text_features: Tensor，文本特征 (batch_size, sequence_length, text_feature_dim)
+            has_description: List[List[int]]，缺失指示符
+            dropout_p: float，dropout 概率
+        
+        返回：
+            text_features_dropped: Tensor，应用 dropout 后的特征
+        """
+        text_features = text_features.clone()
+        batch_size, seq_len = text_features.shape[0], text_features.shape[1]
+        
+        for b in range(batch_size):
+            for t in range(seq_len):
+                # 仅对有真实描述的位置应用 dropout
+                if has_description[b][t] == 1 and torch.rand(1).item() < dropout_p:
+                    # 用缺失占位符替换该位置
+                    text_features[b, t] = self.mask_embedding()
+        
+        return text_features
 
     def gather_feat_pose_rgb(self, gcn_feat, rgb_feat, indices, rgb_len, pose_init):
+        # 将姿态特征和 RGB 特征进行融合
         b, c, T, n = gcn_feat.shape
         assert rgb_feat.shape[0] == indices.shape[0]
         rgb_feat = self.rgb_proj(rgb_feat)
@@ -169,12 +264,12 @@ class Uni_Sign(nn.Module):
         start = 0
         for batch in range(b):
             index = indices[start:start + rgb_len[batch]].to(torch.long)
-            # ignore some invalid rgb clip
+            # 忽略无效的 RGB 片段
             if rgb_len[batch] == 1 and -1 in index:
                 start = start + rgb_len[batch]
                 continue
             
-            # index selection
+            # 特征索引选择
             gcn_feat_selected = gcn_feat[batch, :, index]
             rgb_feat_selected = rgb_feat[start:start + rgb_len[batch]]
             pose_init_selected = pose_init[start:start + rgb_len[batch]]
@@ -182,7 +277,7 @@ class Uni_Sign(nn.Module):
             gcn_feat_selected = rearrange(gcn_feat_selected, 'c t n -> t c n')
             pose_init_selected = rearrange(pose_init_selected, 't n c -> t c n')
             
-            # PGF forward
+            # 姿态-RGB 融合前向传播
             with self.maybe_autocast():
                 fused_transposed = self.fusion_pose_rgb_DA(pose_feat=gcn_feat_selected,
                                                             rgb_feat=rgb_feat_selected, 
@@ -196,7 +291,7 @@ class Uni_Sign(nn.Module):
             gcn_feat = gcn_feat.clone() 
             fused_transposed_post = rearrange(fused_transposed_post, 't c n -> c t n')
             
-            # replace gcn feature
+            # 替换 GCN 特征
             gcn_feat[batch, :, index] = fused_transposed_post
             start = start + rgb_len[batch]
             
@@ -204,7 +299,7 @@ class Uni_Sign(nn.Module):
         return gcn_feat
 
     def forward(self, src_input, tgt_input):
-        # RGB branch forward
+        # RGB 分支前向传播
         if self.args.rgb_support:
             rgb_support_dict = {}
             for index_key, rgb_key in zip(['left_sampled_indices', 'right_sampled_indices'], ['left_hands', 'right_hands']):
@@ -213,14 +308,14 @@ class Uni_Sign(nn.Module):
                 rgb_support_dict[index_key] = src_input[index_key]
                 rgb_support_dict[rgb_key] = rgb_feat
         
-        # Pose branch forward
+        # 姿态分支前向传播
         features = []
 
         body_feat = None
         for part in self.modes:
-            # project position to hidden dim
+            # 将位置信息投影到隐层维度
             proj_feat = self.proj_linear[part](src_input[part]).permute(0,3,1,2) #B,C,T,V
-            # spatial gcn forward
+            # 空间 GCN 前向传播
             gcn_feat = self.gcn_modules[part](proj_feat)
             if part == 'body':
                 body_feat = gcn_feat
@@ -228,7 +323,7 @@ class Uni_Sign(nn.Module):
             else:
                 assert not body_feat is None
                 if part == 'left':
-                    # Pose RGB fusion
+                    # 姿态-RGB 融合
                     if self.args.rgb_support:
                         gcn_feat = self.gather_feat_pose_rgb(gcn_feat, 
                                                             rgb_support_dict[f'{part}_hands'], 
@@ -240,7 +335,7 @@ class Uni_Sign(nn.Module):
                     gcn_feat = gcn_feat + body_feat[..., -2][...,None].detach()
                     
                 elif part == 'right':
-                    # Pose RGB fusion
+                    # 姿态-RGB 融合
                     if self.args.rgb_support:
                         gcn_feat = self.gather_feat_pose_rgb(gcn_feat, 
                                                                 rgb_support_dict[f'{part}_hands'], 
@@ -257,15 +352,34 @@ class Uni_Sign(nn.Module):
                 else:
                     raise NotImplementedError
             
-            # temporal gcn forward
+            # 时间 GCN 前向传播
             gcn_feat = self.fusion_gcn_modules[part](gcn_feat) #B,C,T,V
             pool_feat = gcn_feat.mean(-1).transpose(1,2) #B,T,C
             features.append(pool_feat)
         
-        # concat sub-pose feature across token dimension
+        # 连接多个子姿态特征
         inputs_embeds = torch.cat(features, dim=-1) + self.part_para
         inputs_embeds = self.pose_proj(inputs_embeds)
+        
+        # 多模态融合（Stage 3）
+        if self.use_descriptions and src_input.get('descriptions') is not None:
+            # 获取描述文本和缺失指示符
+            descriptions = src_input['descriptions']  # List[List[str or None]]
+            has_description = src_input['has_description']  # List[List[int]]
+            
+            # 编码文本描述
+            text_features = self._encode_descriptions(descriptions, has_description, inputs_embeds.device)
+            
+            # 应用文本 Dropout（训练时的正则化）
+            if self.training and self.text_dropout_p > 0:
+                text_features = self._apply_text_dropout(text_features, has_description, self.text_dropout_p)
+            
+            # 执行融合
+            inputs_embeds = self.gating_fusion(inputs_embeds, text_features)
+        
 
+
+        # 生成前缀 Token
         prefix_token = self.mt5_tokenizer(
                                 [f"Translate sign language video to {self.lang}: "] * len(tgt_input["gt_sentence"]),
                                 padding="longest",
@@ -276,24 +390,29 @@ class Uni_Sign(nn.Module):
         prefix_embeds = self.mt5_model.encoder.embed_tokens(prefix_token['input_ids'])
         inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
 
+        # 构建注意力掩码
         attention_mask = torch.cat([prefix_token['attention_mask'],
                                     src_input['attention_mask']], dim=1)
 
+        # 预处理目标文本
         tgt_input_tokenizer = self.mt5_tokenizer(tgt_input['gt_sentence'], 
                                                 return_tensors="pt", 
                                                 padding=True,
                                                 truncation=True,
                                                 max_length=50)
             
+        # 准备标签（将 padding token 设为 -100 以忽略）
         labels = tgt_input_tokenizer['input_ids']
         labels[labels == self.mt5_tokenizer.pad_token_id] = -100
         
+        # MT5 模型前向传播
         out = self.mt5_model(inputs_embeds = inputs_embeds,
                     attention_mask = attention_mask,
                     labels = labels.to(inputs_embeds.device),
                     return_dict = True,
                     )
         
+        # 计算交叉熵损失
         label = labels.reshape(-1)
         out_logits = out['logits']
         logits = out_logits.reshape(-1,out_logits.shape[-1])
@@ -301,7 +420,7 @@ class Uni_Sign(nn.Module):
         loss = loss_fct(logits, label.to(out_logits.device, non_blocking=True))
 
         stack_out = {
-            # use for inference
+            # 用于推理
             'inputs_embeds':inputs_embeds,
             'attention_mask':attention_mask,
             'loss':loss,
@@ -310,10 +429,22 @@ class Uni_Sign(nn.Module):
         return stack_out
     
     @torch.no_grad()
-    def generate(self,pre_compute_item,max_new_tokens,num_beams):
+    def generate(self, pre_compute_item, max_new_tokens, num_beams):
+        """
+        使用 MT5 模型生成翻译结果
+        
+        参数：
+            pre_compute_item: 预计算的输入（包含 inputs_embeds 和 attention_mask）
+            max_new_tokens: 生成的最大 token 数
+            num_beams: 束搜索的束数
+        
+        返回：
+            生成的 token 序列
+        """
         inputs_embeds = pre_compute_item['inputs_embeds']
         attention_mask = pre_compute_item['attention_mask']
        
+        # 使用束搜索进行文本生成
         out = self.mt5_model.generate(inputs_embeds = inputs_embeds,
                                 attention_mask = attention_mask,
                                 max_new_tokens=max_new_tokens,
@@ -323,9 +454,19 @@ class Uni_Sign(nn.Module):
         return out
 
 def get_requires_grad_dict(model):
+    """
+    获取模型参数的梯度需求字典
+    
+    参数：
+        model: PyTorch 模型
+    
+    返回：
+        parameter_dict: 记录每个参数是否需要梯度的字典
+    """
     param_requires_grad = {name: True for name, param in model.named_parameters()}
     param_requires_grad_right = {}
     for key in param_requires_grad.keys():
+        # 同步左右手参数的梯度设置
         if 'left' in key:
             param_requires_grad_right[key.replace("left", 'right')] = param_requires_grad[key]
     param_requires_grad = {**param_requires_grad,

@@ -1,0 +1,48 @@
+【缺失模态处理 - 项目说明】
+
+亲爱的用户：
+
+本项目已为您生成了针对 "缺失动作描述文本" 的完整优化方案。
+
+✅ 已生成的文档：
+
+1. MISSING_MODALITY_README.md (11K) ⭐ [从这里开始]
+   - 项目完整概述
+   - 三个核心问题的答案
+   - 快速开始指南
+
+2. MISSING_MODALITY_INDEX.md (7.1K)
+   - 文档导航
+   - 快速决策表
+   - 阅读顺序建议
+
+❌ 注意：以下文档因大小限制未能创建，但核心内容已在上述两个文档中涵盖：
+   - MISSING_MODALITY_STRATEGY.md (完整方案详细版)
+   - MISSING_MODALITY_QUICK_REFERENCE.md (快速参考卡)
+   - MISSING_MODALITY_ANALYSIS.md (理论分析详细版)
+
+📚 如需完整版本，请参考：
+   - MISSING_MODALITY_README.md 中的核心建议汇总
+   - MISSING_MODALITY_INDEX.md 中的详细分析指针
+
+🎯 核心建议 (三行总结)：
+   【占位符】 可学习掩码 (Learnable Mask Embedding)
+   【训练】   Text Dropout (rate=0.3)
+   【推理】   缺失感知融合 (加入 has_text 指示符)
+
+📈 预期成果：
+   • BLEU 提升: +3-5%
+   • 一致性: BLEU差异 < 2%, KL < 0.1
+   • 时间: 2-3 周完成
+
+🚀 立即开始：
+   1. 打开 MISSING_MODALITY_README.md
+   2. 阅读"核心建议总结"部分
+   3. 按照"快速开始"部分的阶段 1-3 进行
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+如有任何疑问，请参考：
+  • FAQ 部分 (在 README 中)
+  • 故障排查指南 (在 INDEX 中)
+

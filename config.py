@@ -43,3 +43,8 @@ pose_dirs = {
             "How2Sign": "./dataset/WLASL/pose_format",
             "OpenASL": "./dataset/WLASL/pose_format",
 }
+
+# 动作描述文件路径（Stage 3 多模态融合）
+description_dirs = {
+            "CSL_Daily": "./description/CSL-Daily/split_data",
+}

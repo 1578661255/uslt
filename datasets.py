@@ -11,8 +11,10 @@ import pickle
 from decord import VideoReader, cpu
 import json
 import pathlib
+from pathlib import Path
 from torchvision import transforms
-from config import rgb_dirs, pose_dirs
+from config import rgb_dirs, pose_dirs, description_dirs
+from temporal_alignment import DescriptionLoader, TemporalAligner
 
 # load sub-pose
 def load_part_kp(skeletons, confs, force_ok=False):
@@ -335,13 +337,28 @@ def load_video_support_rgb(path, tmp):
 # build base dataset
 class Base_Dataset(Dataset.Dataset):
     def collate_fn(self, batch):
-        tgt_batch,src_length_batch,name_batch,pose_tmp,gloss_batch = [],[],[],[],[]
+        # 初始化批次数据
+        tgt_batch, src_length_batch, name_batch, pose_tmp, gloss_batch = [], [], [], [], []
+        descriptions_batch = []
+        has_description_batch = []
         
-        for name_sample, pose_sample, text, gloss, _ in batch:
+        # 解包批次数据，支持新旧格式兼容
+        for item in batch:
+            if len(item) == 7:
+                # 新格式：包含描述和缺失指示符
+                (name_sample, pose_sample, text, gloss, support_rgb_dict,
+                 descriptions, has_description) = item[:7]
+            else:
+                # 原格式（向后兼容）
+                name_sample, pose_sample, text, gloss, support_rgb_dict = item[:5]
+                descriptions = None
+                has_description = None
             name_batch.append(name_sample)
             pose_tmp.append(pose_sample)
             tgt_batch.append(text)
             gloss_batch.append(gloss)
+            descriptions_batch.append(descriptions)
+            has_description_batch.append(has_description)
 
         src_input = {}
 
@@ -376,8 +393,9 @@ class Base_Dataset(Dataset.Dataset):
                 src_input['src_length_batch'] = src_length_batch
                 
         if self.rgb_support:
-            support_rgb_dicts = {key:[] for key in batch[0][-1].keys()}
-            for _, _, _, _, support_rgb_dict in batch:
+            support_rgb_dicts = {key:[] for key in batch[0][4].keys()}  # 第5个元素是support_rgb_dict
+            for item in batch:
+                support_rgb_dict = item[4]  # 获取第5个元素（support_rgb_dict）
                 for key in support_rgb_dict.keys():
                     support_rgb_dicts[key].append(support_rgb_dict[key])
             
@@ -396,6 +414,30 @@ class Base_Dataset(Dataset.Dataset):
                 src_input[rgb_key] = img_batch
                 src_input[len_key] = [len(index) for index in support_rgb_dicts[index_key]]
 
+        # 打包描述文本
+        if descriptions_batch and descriptions_batch[0] is not None:
+            src_input['descriptions'] = descriptions_batch
+            # 打包缺失指示符
+            if has_description_batch and has_description_batch[0] is not None:
+                max_desc_len = max((len(d) for d in descriptions_batch 
+                                   if d is not None), default=0)
+                has_description_padded = []
+                for has_desc in has_description_batch:
+                    if has_desc is not None:
+                        if len(has_desc) < max_desc_len:
+                            padded = torch.cat([
+                                torch.tensor(has_desc, dtype=torch.float32),
+                                torch.zeros(max_desc_len - len(has_desc), dtype=torch.float32)
+                            ])
+                        else:
+                            padded = torch.tensor(has_desc, dtype=torch.float32)
+                        has_description_padded.append(padded)
+                if has_description_padded:
+                    src_input['has_description'] = torch.stack(has_description_padded)
+        else:
+            src_input['descriptions'] = None
+            src_input['has_description'] = None
+
         tgt_input = {}
         tgt_input['gt_sentence'] = tgt_batch
         tgt_input['gt_gloss'] = gloss_batch
@@ -411,6 +453,9 @@ class S2T_Dataset(Base_Dataset):
         self.max_length = args.max_length
         self.raw_data = utils.load_dataset_file(path)
         self.phase = phase
+        
+        # 保存采样的帧索引（用于描述对齐）
+        self._last_frame_indices = None
 
         if self.args.dataset == "CSL_Daily":
             self.pose_dir = pose_dirs[args.dataset]
@@ -439,6 +484,31 @@ class S2T_Dataset(Base_Dataset):
                                     transforms.ToTensor(),
                                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]), 
                                     ])
+        
+        # 初始化描述加载器
+        self.use_descriptions = getattr(args, 'use_descriptions', False)
+        if self.use_descriptions:
+            # 从 config 中获取描述文件基础路径
+            if args.dataset in description_dirs:
+                # 使用 config 中的路径 + phase 子文件夹
+                desc_base_dir = Path(description_dirs[args.dataset])
+                desc_dir = desc_base_dir / phase  # 例如 ./description/CSL_Daily/split_data/train
+                
+                # 检查描述文件夹是否存在
+                if desc_dir.exists():
+                    self.desc_loader = DescriptionLoader(str(desc_dir))
+                else:
+                    print(f"[警告] 描述文件夹不存在: {desc_dir}")
+                    print(f"[警告] 禁用描述文本加载")
+                    self.desc_loader = None
+                    self.use_descriptions = False
+            else:
+                print(f"[警告] config.py 中未配置 {args.dataset} 的描述文件路径")
+                print(f"[警告] 禁用描述文本加载")
+                self.desc_loader = None
+                self.use_descriptions = False
+        else:
+            self.desc_loader = None
 
     def __len__(self):
         return len(self.list)
@@ -455,10 +525,20 @@ class S2T_Dataset(Base_Dataset):
         
         name_sample = sample['name']
         pose_sample, support_rgb_dict = self.load_pose(sample['video_path'])
-
-        return name_sample,pose_sample,text, gloss, support_rgb_dict
+        
+        # 加载和对齐描述文本
+        descriptions = None
+        has_description = None
+        if self.use_descriptions and self.desc_loader:
+            descriptions, has_description = self._load_and_align_descriptions(
+                name_sample, pose_sample
+            )
+        
+        # 返回扩展的元组（包含描述文本）
+        return name_sample, pose_sample, text, gloss, support_rgb_dict, descriptions, has_description
     
     def load_pose(self, path):
+        """加载姿态数据，并保存采样的帧索引用于描述对齐"""
         pose = pickle.load(open(os.path.join(self.pose_dir, path.replace(".mp4", '.pkl')), 'rb'))
             
         if 'start' in pose.keys():
@@ -475,6 +555,9 @@ class S2T_Dataset(Base_Dataset):
             tmp = list(range(duration))
         
         tmp = np.array(tmp) + start
+        
+        # 保存采样的帧索引（原始帧号），用于描述对齐
+        self._last_frame_indices = tmp.copy()
             
         skeletons = pose['keypoints']
         confs = pose['scores']
@@ -495,6 +578,59 @@ class S2T_Dataset(Base_Dataset):
             support_rgb_dict = load_support_rgb_dict(tmp, skeletons, confs, full_path, self.data_transform)
             
         return kps_with_scores, support_rgb_dict
+    
+    def _load_and_align_descriptions(self, sample_id: str, pose_sample: dict):
+        """
+        加载并对齐描述文本
+        
+        参数：
+            sample_id (str): 样本 ID，例如 'S000196_P0000_T00'
+            pose_sample (dict): 姿态字典，包含时间维度信息
+        
+        返回：
+            aligned_descriptions (list): 对齐后的描述文本列表 [str or None, ...]
+            has_description (list): 缺失指示符 [int, ...]
+                                   1 = 有真实描述，0 = 插值/缺失/最近邻
+        """
+        try:
+            # 获取样本 ID（无扩展名）
+            if isinstance(sample_id, str):
+                sample_id = Path(sample_id).stem
+            
+            # 加载原始描述
+            original_descriptions, metadata = self.desc_loader.load(sample_id)
+            
+            if not metadata['success'] or not original_descriptions:
+                return None, None
+            
+            # 获取时间维度（采样帧数）
+            # 从 pose_sample 字典中的任意 key 获取时间维度
+            T_sampled = next(iter(pose_sample.values())).shape[0]
+            
+            # 获取采样后的帧索引（在 load_pose 中保存）
+            if self._last_frame_indices is not None:
+                # 使用实际的采样帧索引
+                sampled_frame_indices = self._last_frame_indices.tolist()
+            else:
+                # 降级方案：假设是顺序采样
+                sampled_frame_indices = list(range(T_sampled))
+            
+            # 智能插值对齐
+            aligner = TemporalAligner(
+                original_descriptions,
+                sampled_frame_indices,
+                use_nearest_neighbor=True,
+                use_linear_interpolation=False
+            )
+            aligned_descriptions, has_desc = aligner.align()
+            
+            return aligned_descriptions, has_desc
+        
+        except Exception as e:
+            print(f"[错误] 加载描述文本失败 - 样本 ID: {sample_id}, 错误: {e}")
+            import traceback
+            traceback.print_exc()
+            return None, None
 
     def __str__(self):
         return f'#total {len(self)}'

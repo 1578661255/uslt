@@ -15,6 +15,7 @@ log/
 *.mp4
 tools/*.jpg
 tools/*.mp4
-bleurt-master/
+pre_training.py
+token.txt
 BLEURT-20/
-*.pyc
+bleurt-master/

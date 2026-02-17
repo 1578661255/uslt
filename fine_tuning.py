@@ -21,11 +21,7 @@ def main(args):
 
     print(args)
     utils.set_seed(args.seed)
-    # 确保args中有use_descriptions参数
-    if not hasattr(args, 'use_descriptions'):
-        args.use_descriptions = False
-        
-    
+
     print(f"Creating dataset:")
         
     train_data = S2T_Dataset(path=train_label_paths[args.dataset], 
@@ -75,6 +71,11 @@ def main(args):
     for name, param in model.named_parameters():
         if param.requires_grad:
             param.data = param.data.to(torch.float32)
+    
+    # 冻结 TextEncoder 参数（如果启用多模态并指定冻结）
+    if args.use_descriptions and args.text_encoder_freeze and hasattr(model, 'text_encoder'):
+        for param in model.text_encoder.parameters():
+            param.requires_grad = False
 
     if args.finetune != '':
         print('***********************************')
@@ -213,6 +214,10 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
             for key in src_input.keys():
                 if isinstance(src_input[key], torch.Tensor):
                     src_input[key] = src_input[key].to(target_dtype).cuda()
+                # 处理非 Tensor 数据（描述文本等）
+                elif key in ['descriptions', 'has_description']:
+                    # descriptions 和 has_description 不需要 dtype 转换，但仍需传递给 GPU
+                    pass
 
         if args.task == "CSLR":
             tgt_input['gt_sentence'] = tgt_input['gt_gloss']
@@ -256,6 +261,10 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
                 for key in src_input.keys():
                     if isinstance(src_input[key], torch.Tensor):
                         src_input[key] = src_input[key].to(target_dtype).cuda()
+                    # 处理非 Tensor 数据（描述文本等）
+                    elif key in ['descriptions', 'has_description']:
+                        # descriptions 和 has_description 不需要 dtype 转换
+                        pass
             
             if args.task == "CSLR":
                 tgt_input['gt_sentence'] = tgt_input['gt_gloss']
