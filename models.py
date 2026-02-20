@@ -166,13 +166,12 @@ class Uni_Sign(nn.Module):
             
             # 融合模块（学习权重融合）
             self.gating_fusion = GatingFusion(
-                pose_feature_dim=768,
-                text_feature_dim=self.text_feature_dim,
-                hidden_dim=768
+                feature_dim=768,
+                gating_hidden_dim=512
             )
             
             # 缺失描述处理（可学习的占位符）
-            self.mask_embedding = LearnableMaskEmbedding(dim=self.text_feature_dim)
+            self.mask_embedding = LearnableMaskEmbedding(hidden_dim=self.text_feature_dim)
             
             # 文本 Dropout（防止过拟合）
             self.text_dropout_p = getattr(args, 'text_dropout_p', 0.1)

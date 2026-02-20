@@ -1,0 +1,56 @@
+(Uni-Sign) root@vlp-2gpu-2-32:/home/code/Uni-Sign# bash ./script/train_stage3_copy.sh 
+[2026-02-19 23:59:03,634] [WARNING] [runner.py:232:fetch_hostfile] Unable to find hostfile, will proceed with training with local resources only.
+[2026-02-19 23:59:03,635] [INFO] [runner.py:630:main] cmd = /root/anaconda3/envs/Uni-Sign/bin/python3.9 -u -m deepspeed.launcher.launch --world_info=eyJsb2NhbGhvc3QiOiBbMCwgMV19 --master_addr=127.0.0.1 --master_port=29511 --enable_each_rank_log=None --log_level=info fine_tuning.py --batch-size 8 --gradient-accumulation-steps 1 --epochs 20 --opt AdamW --lr 3e-4 --output_dir out/stage3_finetuning --finetune /home/code/Uni-Sign/checkpoint/csl_stage2_weight.pth --dataset CSL_Daily --task SLT --use_descriptions --text_encoder_freeze --rgb_support
+[2026-02-19 23:59:07,489] [INFO] [launch.py:162:main] WORLD INFO DICT: {'localhost': [0, 1]}
+[2026-02-19 23:59:07,489] [INFO] [launch.py:168:main] nnodes=1, num_local_procs=2, node_rank=0
+[2026-02-19 23:59:07,489] [INFO] [launch.py:179:main] global_rank_mapping=defaultdict(<class 'list'>, {'localhost': [0, 1]})
+[2026-02-19 23:59:07,489] [INFO] [launch.py:180:main] dist_world_size=2
+[2026-02-19 23:59:07,489] [INFO] [launch.py:184:main] Setting CUDA_VISIBLE_DEVICES=0,1
+[2026-02-19 23:59:07,504] [INFO] [launch.py:272:main] process 53952 spawned with command: ['/root/anaconda3/envs/Uni-Sign/bin/python3.9', '-u', 'fine_tuning.py', '--local_rank=0', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '3e-4', '--output_dir', 'out/stage3_finetuning', '--finetune', '/home/code/Uni-Sign/checkpoint/csl_stage2_weight.pth', '--dataset', 'CSL_Daily', '--task', 'SLT', '--use_descriptions', '--text_encoder_freeze', '--rgb_support']
+[2026-02-19 23:59:07,534] [INFO] [launch.py:272:main] process 53968 spawned with command: ['/root/anaconda3/envs/Uni-Sign/bin/python3.9', '-u', 'fine_tuning.py', '--local_rank=1', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '3e-4', '--output_dir', 'out/stage3_finetuning', '--finetune', '/home/code/Uni-Sign/checkpoint/csl_stage2_weight.pth', '--dataset', 'CSL_Daily', '--task', 'SLT', '--use_descriptions', '--text_encoder_freeze', '--rgb_support']
+| distributed init (rank 0): env://
+| distributed init (rank 1): env://
+Namespace(batch_size=8, gradient_accumulation_steps=1, gradient_clipping=1.0, epochs=20, world_size=2, dist_url='env://', local_rank=0, hidden_dim=256, finetune='/home/code/Uni-Sign/checkpoint/csl_stage2_weight.pth', opt='AdamW', opt_eps=1e-09, opt_betas=None, clip_grad=None, momentum=0.9, weight_decay=0.0001, sched='cosine', lr=0.0003, min_lr=1e-08, warmup_epochs=0, output_dir='out/stage3_finetuning', seed=42, eval=False, num_workers=8, pin_mem=True, offload=False, dtype='bf16', zero_stage=2, compute_fp32_loss=False, quick_break=0, rgb_support=True, max_length=256, dataset='CSL_Daily', task='SLT', label_smoothing=0.2, online_video='', use_descriptions=True, text_dropout_p=0.1, text_encoder_freeze=True, fusion_checkpoint='', rank=0, gpu=0, distributed=True, dist_backend='nccl')
+Creating dataset:
+#total 18401
+#total 1176
+#total 1077
+Creating model:
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=EfficientNet_B0_Weights.IMAGENET1K_V1`. You can also use `weights=EfficientNet_B0_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=EfficientNet_B0_Weights.IMAGENET1K_V1`. You can also use `weights=EfficientNet_B0_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/huggingface_hub/file_download.py:942: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
+  warnings.warn(
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/huggingface_hub/file_download.py:942: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
+  warnings.warn(
+You are using the default legacy behaviour of the <class 'transformers.models.t5.tokenization_t5.T5Tokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565
+You are using the default legacy behaviour of the <class 'transformers.models.t5.tokenization_t5.T5Tokenizer'>. This is expected, and simply means that the `legacy` (previous) behavior will be used so nothing changes for you. If you want to use the new behaviour, set `legacy=False`. This should only be set if you understand what it means, and thoroughly read the reason why this was added as explained in https://github.com/huggingface/transformers/pull/24565
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/transformers/convert_slow_tokenizer.py:560: UserWarning: The sentencepiece tokenizer that you are converting to a fast tokenizer uses the byte fallback option which is not implemented in the fast tokenizers. In practice this means that the fast version of the tokenizer can produce unknown tokens whereas the sentencepiece version would have converted these unknown tokens into a sequence of byte tokens matching the original piece of text.
+  warnings.warn(
+/root/anaconda3/envs/Uni-Sign/lib/python3.9/site-packages/transformers/convert_slow_tokenizer.py:560: UserWarning: The sentencepiece tokenizer that you are converting to a fast tokenizer uses the byte fallback option which is not implemented in the fast tokenizers. In practice this means that the fast version of the tokenizer can produce unknown tokens whereas the sentencepiece version would have converted these unknown tokens into a sequence of byte tokens matching the original piece of text.
+  warnings.warn(
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/code/Uni-Sign/fine_tuning.py", line 347, in <module>
+[rank0]:     main(args)
+[rank0]:   File "/home/code/Uni-Sign/fine_tuning.py", line 67, in main
+[rank0]:     model = Uni_Sign(args=args)
+[rank0]:   File "/home/code/Uni-Sign/models.py", line 168, in __init__
+[rank0]:     self.gating_fusion = GatingFusion(
+[rank0]: TypeError: __init__() got an unexpected keyword argument 'pose_feature_dim'
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/home/code/Uni-Sign/fine_tuning.py", line 347, in <module>
+[rank1]:     main(args)
+[rank1]:   File "/home/code/Uni-Sign/fine_tuning.py", line 67, in main
+[rank1]:     model = Uni_Sign(args=args)
+[rank1]:   File "/home/code/Uni-Sign/models.py", line 168, in __init__
+[rank1]:     self.gating_fusion = GatingFusion(
+[rank1]: TypeError: __init__() got an unexpected keyword argument 'pose_feature_dim'
+[rank0]:[W219 23:59:35.614758264 ProcessGroupNCCL.cpp:1250] Warning: WARNING: process group has NOT been destroyed before we destruct ProcessGroupNCCL. On normal program exit, the application should call destroy_process_group to ensure that any pending NCCL operations have finished in this process. In rare cases this process can exit before this point and block the progress of another member of the process group. This constraint has always been present,  but this warning has only been added since PyTorch 2.4 (function operator())
+[2026-02-19 23:59:36,565] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 53952
+[2026-02-19 23:59:36,574] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 53968
+[2026-02-19 23:59:36,574] [ERROR] [launch.py:341:sigkill_handler] ['/root/anaconda3/envs/Uni-Sign/bin/python3.9', '-u', 'fine_tuning.py', '--local_rank=1', '--batch-size', '8', '--gradient-accumulation-steps', '1', '--epochs', '20', '--opt', 'AdamW', '--lr', '3e-4', '--output_dir', 'out/stage3_finetuning', '--finetune', '/home/code/Uni-Sign/checkpoint/csl_stage2_weight.pth', '--dataset', 'CSL_Daily', '--task', 'SLT', '--use_descriptions', '--text_encoder_freeze', '--rgb_support'] exits with return code = 1
