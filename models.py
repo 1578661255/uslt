@@ -220,9 +220,10 @@ class Uni_Sign(nn.Module):
                 if has_description[b][t] == 1 and descriptions[b][t] is not None:
                     # 编码真实描述
                     desc_text = descriptions[b][t]
-                    with torch.no_grad():
-                        desc_feature = self.text_encoder(desc_text)
-                    text_features[b, t] = desc_feature.squeeze(0)
+                    # TextEncoder 期望列表输入，将单个字符串包装成列表
+                    # 输出形状为 (1, 768)，取第 0 个元素得到 (768,)
+                    desc_feature = self.text_encoder([desc_text])
+                    text_features[b, t] = desc_feature[0]
                 else:
                     # 使用可学习的缺失占位符
                     text_features[b, t] = self.mask_embedding()
@@ -373,8 +374,21 @@ class Uni_Sign(nn.Module):
             if self.training and self.text_dropout_p > 0:
                 text_features = self._apply_text_dropout(text_features, has_description, self.text_dropout_p)
             
-            # 执行融合
-            inputs_embeds = self.gating_fusion(inputs_embeds, text_features)
+            # 将 has_description 转换为 tensor（形状：B, T, 1）
+            has_description_tensor = torch.tensor(
+                has_description, 
+                dtype=torch.float32, 
+                device=inputs_embeds.device
+            ).unsqueeze(-1)  # (B, T) → (B, T, 1)
+            
+            # 执行融合（返回融合特征和门控权重）
+            fused_feat, gate_weights = self.gating_fusion(
+                inputs_embeds, 
+                text_features, 
+                has_description_tensor,
+                self.text_dropout_p if self.training else 0.0
+            )
+            inputs_embeds = fused_feat
         
 
 
@@ -383,6 +397,7 @@ class Uni_Sign(nn.Module):
                                 [f"Translate sign language video to {self.lang}: "] * len(tgt_input["gt_sentence"]),
                                 padding="longest",
                                 truncation=True,
+                                max_length=100,
                                 return_tensors="pt",
                             ).to(inputs_embeds.device)
         
