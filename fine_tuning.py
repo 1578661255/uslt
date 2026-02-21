@@ -83,7 +83,7 @@ def main(args):
         print('***********************************')
         state_dict = torch.load(args.finetune, map_location='cpu')['model']
 
-        ret = model.load_state_dict(state_dict, strict=True)
+        ret = model.load_state_dict(state_dict, strict=False)
         print('Missing keys: \n', '\n'.join(ret.missing_keys))
         print('Unexpected keys: \n', '\n'.join(ret.unexpected_keys))
     
