@@ -70,7 +70,10 @@ class TextEncoder(nn.Module):
         
         # 加载分词器和编码器
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.encoder = AutoModel.from_pretrained(model_name)
+        # 仅加载编码器部分（不需要解码器）
+        # MT5Model 可以通过 .encoder 访问编码器部分
+        full_model = AutoModel.from_pretrained(model_name)
+        self.encoder = full_model.encoder
         
         # 将模型移到目标设备
         self.encoder = self.encoder.to(device)
