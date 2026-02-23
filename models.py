@@ -12,7 +12,7 @@ from deformable_attention_2d import DeformableAttention2D
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
-from text_fusion_modules import TextEncoder, GatingFusion, LearnableMaskEmbedding
+from text_fusion_modules import create_text_encoder, GatingFusion, LearnableMaskEmbedding
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
@@ -158,11 +158,25 @@ class Uni_Sign(nn.Module):
         # 初始化多模态融合模块（Stage 3）
         self.use_descriptions = getattr(args, 'use_descriptions', False)
         if self.use_descriptions:
-            # 文本编码器（mT5-base，冻结推理）
-            self.text_encoder = TextEncoder(model_name='google/mt5-base')
+            # 从配置中选择文本编码器类型（默认 mT5-base）
+            encoder_type = getattr(args, 'encoder_type', 'mt5').lower()
             
-            # 文本特征维度
-            self.text_feature_dim = 768
+            # 编码器定义的输出维度映射
+            encoder_output_dims = {
+                'mt5': 768,      # mT5-base
+                'bert': 768,     # BERT-base
+                'clip': 768      # CLIP-text（投影后）
+            }
+            
+            # 使用工厂函数创建编码器
+            self.text_encoder = create_text_encoder(
+                encoder_type=encoder_type,
+                hidden_dim=768,
+                device=args.device if hasattr(args, 'device') else 'cuda'
+            )
+            
+            # 设置文本特征维度
+            self.text_feature_dim = encoder_output_dims.get(encoder_type, 768)
             
             # 融合模块（学习权重融合）
             self.gating_fusion = GatingFusion(

@@ -537,6 +537,9 @@ def get_args_parser():
     # Stage 3 多模态融合参数
     parser.add_argument("--use_descriptions", action='store_true',
                         help='启用文本描述多模态融合（Stage 3）')
+    parser.add_argument("--encoder_type", default='mt5', type=str,
+                        choices=['mt5', 'bert', 'clip'],
+                        help='文本编码器类型，支持 mt5（多语言）、bert（英文轻量）、clip（视觉对齐）')
     parser.add_argument("--text_dropout_p", type=float, default=0.1,
                         help='文本描述的 dropout 概率，用于训练时的正则化')
     parser.add_argument("--text_encoder_freeze", action='store_true',
