@@ -672,13 +672,16 @@ class GatingFusion(nn.Module):
         # 概率为 text_dropout_p 的文本特征被随机清为 0
         if text_dropout_p > 0 and self.training:
             dropout_mask = torch.bernoulli(
-                torch.full((B, T, 1), text_dropout_p, device=text_feat.device)
+                torch.full((B, T, 1), text_dropout_p, device=text_feat.device, dtype=text_feat.dtype)
             )
             text_feat = text_feat * (1 - dropout_mask)
         
         # 拼接特征向量
         # [pose_feat, text_feat, has_description]
         # shape: (B, T, 768 + 768 + 1) = (B, T, 1537)
+        # 确保所有张量的 dtype 一致（使用 pose_feat 的 dtype）
+        text_feat = text_feat.to(pose_feat.dtype)
+        has_description = has_description.to(pose_feat.dtype)
         combined = torch.cat([pose_feat, text_feat, has_description], dim=-1)
         
         # Reshape 为 2D 以通过 MLP
