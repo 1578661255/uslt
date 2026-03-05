@@ -214,9 +214,11 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
             for key in src_input.keys():
                 if isinstance(src_input[key], torch.Tensor):
                     src_input[key] = src_input[key].to(target_dtype).cuda()
-                # 处理非 Tensor 数据（描述文本等）
-                elif key in ['descriptions', 'has_description']:
-                    # descriptions 和 has_description 不需要 dtype 转换，但仍需传递给 GPU
+                # has_description 是 tensor，需要放到 GPU 但不需要 dtype 转换
+                elif key == 'has_description' and isinstance(src_input[key], torch.Tensor):
+                    src_input[key] = src_input[key].cuda()
+                # descriptions 是文本列表，保持原样
+                elif key == 'descriptions':
                     pass
 
         if args.task == "CSLR":

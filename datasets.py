@@ -434,6 +434,18 @@ class Base_Dataset(Dataset.Dataset):
                         has_description_padded.append(padded)
                 if has_description_padded:
                     src_input['has_description'] = torch.stack(has_description_padded)
+                else:
+                    # 如果 has_description_padded 为空但有 descriptions，创建全 1 标志（假设都有描述）
+                    batch_size = len(descriptions_batch)
+                    max_desc_len = max((len(d) for d in descriptions_batch 
+                                       if d is not None), default=1)
+                    src_input['has_description'] = torch.ones(batch_size, max_desc_len, dtype=torch.float32)
+            else:
+                # 如果没有 has_description 但有 descriptions，创建全 1 标志
+                batch_size = len(descriptions_batch)
+                max_desc_len = max((len(d) for d in descriptions_batch 
+                                   if d is not None), default=1)
+                src_input['has_description'] = torch.ones(batch_size, max_desc_len, dtype=torch.float32)
         else:
             src_input['descriptions'] = None
             src_input['has_description'] = None

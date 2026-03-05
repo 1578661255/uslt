@@ -231,7 +231,12 @@ class Uni_Sign(nn.Module):
         for b in range(batch_size):
             for t in range(seq_len):
                 # 检查是否有真实描述
-                if has_description[b][t] == 1 and descriptions[b][t] is not None:
+                # has_description 可能是 tensor 或列表，需要处理两种情况
+                has_desc_flag = has_description[b][t]
+                if isinstance(has_desc_flag, torch.Tensor):
+                    has_desc_flag = has_desc_flag.item()
+                
+                if has_desc_flag == 1 and descriptions[b][t] is not None:
                     # 编码真实描述
                     desc_text = descriptions[b][t]
                     # TextEncoder 期望列表输入，将单个字符串包装成列表
@@ -379,7 +384,11 @@ class Uni_Sign(nn.Module):
         if self.use_descriptions and src_input.get('descriptions') is not None:
             # 获取描述文本和缺失指示符
             descriptions = src_input['descriptions']  # List[List[str or None]]
-            has_description = src_input['has_description']  # List[List[int]]
+            has_description = src_input.get('has_description')  # 安全获取，可能为 None
+            
+            # 如果 has_description 为 None，创建默认值（假设所有都有描述）
+            if has_description is None:
+                has_description = [[1] * len(desc_list) for desc_list in descriptions]
             
             # 编码文本描述
             text_features = self._encode_descriptions(descriptions, has_description, inputs_embeds.device)
