@@ -216,38 +216,65 @@ class Uni_Sign(nn.Module):
         
         参数：
             descriptions: List[List[str or None]]，形状为 (batch_size, sequence_length)
-            has_description: List[List[int]]，缺失指示符 (1=有描述, 0=缺失)
+            has_description: List[List[int]] or Tensor，缺失指示符 (1=有描述, 0=缺失)
             device: 设备（CPU/GPU）
         
         返回：
             text_features: Tensor，形状为 (batch_size, sequence_length, text_feature_dim)
+            has_description_cleaned: List[List[int]]，清洁后的缺失指示符
         """
         batch_size = len(descriptions)
-        seq_len = len(descriptions[0]) if descriptions else 0
-        
-        # 初始化输出特征张量
-        text_features = torch.zeros(batch_size, seq_len, self.text_feature_dim, device=device)
+        # 处理 descriptions_batch 中的 None 项（某些样本没有描述）
+        # 将 None 转换为空列表，并对应创建全 0 的 has_description
+        descriptions_cleaned = []
+        has_description_cleaned = []
         
         for b in range(batch_size):
-            for t in range(seq_len):
-                # 检查是否有真实描述
-                # has_description 可能是 tensor 或列表，需要处理两种情况
-                has_desc_flag = has_description[b][t]
-                if isinstance(has_desc_flag, torch.Tensor):
-                    has_desc_flag = has_desc_flag.item()
+            if descriptions[b] is None:
+                # 该样本没有描述，创建空列表
+                descriptions_cleaned.append([None])  # 至少留一个 None 作为占位符
+                has_description_cleaned.append([0])
+            else:
+                descriptions_cleaned.append(descriptions[b])
+                # 处理 has_description（可能是列表或 tensor）
+                if has_description is not None:
+                    has_desc = has_description[b]
+                    if isinstance(has_desc, torch.Tensor):
+                        # 将 tensor 转换为列表
+                        has_desc = has_desc.cpu().tolist()
+                    has_description_cleaned.append(has_desc if has_desc else [1] * len(descriptions[b]))
+                else:
+                    has_description_cleaned.append([1] * len(descriptions[b]))
+        
+        # 重新计算序列长度（所有序列统一长度）
+        max_seq_len = max((len(d) for d in descriptions_cleaned), default=1)
+        
+        # 初始化输出特征张量
+        text_features = torch.zeros(batch_size, max_seq_len, self.text_feature_dim, device=device)
+        
+        for b in range(batch_size):
+            for t in range(max_seq_len):
+                # 安全获取标志（处理序列长度不一致的情况）
+                if t < len(has_description_cleaned[b]):
+                    has_desc_flag = has_description_cleaned[b][t]
+                else:
+                    has_desc_flag = 0
                 
-                if has_desc_flag == 1 and descriptions[b][t] is not None:
+                # 安全获取描述（处理序列长度不一致和 None 值）
+                if t < len(descriptions_cleaned[b]) and descriptions_cleaned[b][t] is not None:
+                    desc_text = descriptions_cleaned[b][t]
+                else:
+                    desc_text = None
+                
+                if has_desc_flag == 1 and desc_text is not None:
                     # 编码真实描述
-                    desc_text = descriptions[b][t]
-                    # TextEncoder 期望列表输入，将单个字符串包装成列表
-                    # 输出形状为 (1, 768)，取第 0 个元素得到 (768,)
                     desc_feature = self.text_encoder([desc_text])
                     text_features[b, t] = desc_feature[0]
                 else:
                     # 使用可学习的缺失占位符
                     text_features[b, t] = self.mask_embedding()
         
-        return text_features
+        return text_features, has_description_cleaned
     
     def _apply_text_dropout(self, text_features, has_description, dropout_p):
         """
@@ -255,7 +282,7 @@ class Uni_Sign(nn.Module):
         
         参数：
             text_features: Tensor，文本特征 (batch_size, sequence_length, text_feature_dim)
-            has_description: List[List[int]]，缺失指示符
+            has_description: List[List[int]]，清洁后的缺失指示符
             dropout_p: float，dropout 概率
         
         返回：
@@ -266,8 +293,14 @@ class Uni_Sign(nn.Module):
         
         for b in range(batch_size):
             for t in range(seq_len):
+                # 安全获取缺失标志
+                if t < len(has_description[b]):
+                    has_desc_flag = has_description[b][t]
+                else:
+                    has_desc_flag = 0
+                
                 # 仅对有真实描述的位置应用 dropout
-                if has_description[b][t] == 1 and torch.rand(1).item() < dropout_p:
+                if has_desc_flag == 1 and torch.rand(1).item() < dropout_p:
                     # 用缺失占位符替换该位置
                     text_features[b, t] = self.mask_embedding()
         
@@ -391,15 +424,19 @@ class Uni_Sign(nn.Module):
                 has_description = [[1] * len(desc_list) for desc_list in descriptions]
             
             # 编码文本描述
-            text_features = self._encode_descriptions(descriptions, has_description, inputs_embeds.device)
+            text_features, has_description_cleaned = self._encode_descriptions(descriptions, has_description, inputs_embeds.device)
             
             # 应用文本 Dropout（训练时的正则化）
             if self.training and self.text_dropout_p > 0:
-                text_features = self._apply_text_dropout(text_features, has_description, self.text_dropout_p)
+                text_features = self._apply_text_dropout(text_features, has_description_cleaned, self.text_dropout_p)
             
-            # 将 has_description 转换为 tensor（形状：B, T, 1）
+            # 将清洁后的 has_description 转换为 tensor（形状：B, T, 1）
+            has_description_tensor = []
+            for b, has_desc_list in enumerate(has_description_cleaned):
+                padded = has_desc_list + [0] * (text_features.shape[1] - len(has_desc_list))
+                has_description_tensor.append(padded)
             has_description_tensor = torch.tensor(
-                has_description, 
+                has_description_tensor, 
                 dtype=torch.float32, 
                 device=inputs_embeds.device
             ).unsqueeze(-1)  # (B, T) → (B, T, 1)

@@ -415,37 +415,38 @@ class Base_Dataset(Dataset.Dataset):
                 src_input[len_key] = [len(index) for index in support_rgb_dicts[index_key]]
 
         # 打包描述文本
-        if descriptions_batch and descriptions_batch[0] is not None:
+        if descriptions_batch and any(d is not None for d in descriptions_batch):
+            # 至少有一个样本有描述
             src_input['descriptions'] = descriptions_batch
-            # 打包缺失指示符
-            if has_description_batch and has_description_batch[0] is not None:
-                max_desc_len = max((len(d) for d in descriptions_batch 
-                                   if d is not None), default=0)
-                has_description_padded = []
-                for has_desc in has_description_batch:
-                    if has_desc is not None:
-                        if len(has_desc) < max_desc_len:
-                            padded = torch.cat([
-                                torch.tensor(has_desc, dtype=torch.float32),
-                                torch.zeros(max_desc_len - len(has_desc), dtype=torch.float32)
-                            ])
-                        else:
-                            padded = torch.tensor(has_desc, dtype=torch.float32)
-                        has_description_padded.append(padded)
-                if has_description_padded:
-                    src_input['has_description'] = torch.stack(has_description_padded)
+            
+            # 打包缺失指示符 - 需要处理 descriptions 中的 None 值
+            max_desc_len = max((len(d) if d is not None else 1 for d in descriptions_batch), default=1)
+            has_description_padded = []
+            
+            for b, descriptions_item in enumerate(descriptions_batch):
+                if descriptions_item is None:
+                    # 该样本没有描述，创建全 0 标志
+                    padded = torch.zeros(max_desc_len, dtype=torch.float32)
+                elif has_description_batch[b] is not None:
+                    # 该样本有描述和对应的缺失标志
+                    has_desc = has_description_batch[b]
+                    if len(has_desc) < max_desc_len:
+                        padded = torch.cat([
+                            torch.tensor(has_desc, dtype=torch.float32),
+                            torch.zeros(max_desc_len - len(has_desc), dtype=torch.float32)
+                        ])
+                    else:
+                        padded = torch.tensor(has_desc, dtype=torch.float32)
                 else:
-                    # 如果 has_description_padded 为空但有 descriptions，创建全 1 标志（假设都有描述）
-                    batch_size = len(descriptions_batch)
-                    max_desc_len = max((len(d) for d in descriptions_batch 
-                                       if d is not None), default=1)
-                    src_input['has_description'] = torch.ones(batch_size, max_desc_len, dtype=torch.float32)
+                    # 该样本有描述但没有缺失标志，创建全 1
+                    padded = torch.ones(max_desc_len, dtype=torch.float32)
+                
+                has_description_padded.append(padded)
+            
+            if has_description_padded:
+                src_input['has_description'] = torch.stack(has_description_padded)
             else:
-                # 如果没有 has_description 但有 descriptions，创建全 1 标志
-                batch_size = len(descriptions_batch)
-                max_desc_len = max((len(d) for d in descriptions_batch 
-                                   if d is not None), default=1)
-                src_input['has_description'] = torch.ones(batch_size, max_desc_len, dtype=torch.float32)
+                src_input['has_description'] = None
         else:
             src_input['descriptions'] = None
             src_input['has_description'] = None
