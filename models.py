@@ -416,47 +416,58 @@ class Uni_Sign(nn.Module):
         
         # 多模态融合（Stage 3）
         if self.use_descriptions and src_input.get('descriptions') is not None:
-            # 获取描述文本和缺失指示符
-            descriptions = src_input['descriptions']  # List[List[str or None]]
-            has_description = src_input.get('has_description')  # 安全获取，可能为 None
-            
-            # 如果 has_description 为 None，创建默认值（假设所有都有描述）
-            if has_description is None:
-                has_description = [[1] * len(desc_list) for desc_list in descriptions]
-            
-            # 编码文本描述（传递视频序列长度以确保对齐）
-            text_features, has_description_cleaned = self._encode_descriptions(
-                descriptions, has_description, inputs_embeds.device, inputs_embeds.shape[1]
-            )
-            
-            # 将 text_features 转换为正确的 dtype（可能是 bfloat16）
-            text_features = text_features.to(inputs_embeds.dtype)
-            
-            # 应用文本 Dropout（训练时的正则化）
-            if self.training and self.text_dropout_p > 0:
-                text_features = self._apply_text_dropout(text_features, has_description_cleaned, self.text_dropout_p)
-            
-            # 将清洁后的 has_description 转换为 tensor（长度对齐到视频序列）
-            has_description_tensor = []
-            for b, has_desc_list in enumerate(has_description_cleaned):
-                # 确保长度与 inputs_embeds 一致
-                padded = has_desc_list + [0] * (inputs_embeds.shape[1] - len(has_desc_list))
-                has_description_tensor.append(padded[:inputs_embeds.shape[1]])  # 截断超出部分
-            
-            has_description_tensor = torch.tensor(
-                has_description_tensor, 
-                dtype=inputs_embeds.dtype,  # 使用相同 dtype（可能是 bfloat16）
-                device=inputs_embeds.device
-            ).unsqueeze(-1)  # (B, T) → (B, T, 1)
-            
-            # 执行融合（返回融合特征和门控权重）
-            fused_feat, gate_weights = self.gating_fusion(
-                inputs_embeds, 
-                text_features, 
-                has_description_tensor,
-                self.text_dropout_p if self.training else 0.0
-            )
-            inputs_embeds = fused_feat
+            descriptions = src_input['descriptions']
+            has_description = src_input.get('has_description')
+            # 1. 如果 descriptions 已经是 tensor（即特征，B,T,768），直接用
+            if isinstance(descriptions, torch.Tensor):
+                text_features = descriptions.to(inputs_embeds.device)
+                # 兼容 float16/bfloat16
+                text_features = text_features.to(inputs_embeds.dtype)
+                # has_description 仍然需要（用于门控/Dropout）
+                if has_description is None:
+                    has_description_tensor = torch.ones(text_features.shape[:2], dtype=inputs_embeds.dtype, device=inputs_embeds.device)
+                else:
+                    if isinstance(has_description, torch.Tensor):
+                        has_description_tensor = has_description.to(inputs_embeds.device).to(inputs_embeds.dtype)
+                    else:
+                        # list
+                        has_description_tensor = torch.tensor(has_description, dtype=inputs_embeds.dtype, device=inputs_embeds.device)
+                if has_description_tensor.dim() == 2:
+                    has_description_tensor = has_description_tensor.unsqueeze(-1)
+                # 融合
+                fused_feat, gate_weights = self.gating_fusion(
+                    inputs_embeds,
+                    text_features,
+                    has_description_tensor,
+                    self.text_dropout_p if self.training else 0.0
+                )
+                inputs_embeds = fused_feat
+            else:
+                # 2. 原始文本描述，走动态编码
+                if has_description is None:
+                    has_description = [[1] * len(desc_list) for desc_list in descriptions]
+                text_features, has_description_cleaned = self._encode_descriptions(
+                    descriptions, has_description, inputs_embeds.device, inputs_embeds.shape[1]
+                )
+                text_features = text_features.to(inputs_embeds.dtype)
+                if self.training and self.text_dropout_p > 0:
+                    text_features = self._apply_text_dropout(text_features, has_description_cleaned, self.text_dropout_p)
+                has_description_tensor = []
+                for b, has_desc_list in enumerate(has_description_cleaned):
+                    padded = has_desc_list + [0] * (inputs_embeds.shape[1] - len(has_desc_list))
+                    has_description_tensor.append(padded[:inputs_embeds.shape[1]])
+                has_description_tensor = torch.tensor(
+                    has_description_tensor,
+                    dtype=inputs_embeds.dtype,
+                    device=inputs_embeds.device
+                ).unsqueeze(-1)
+                fused_feat, gate_weights = self.gating_fusion(
+                    inputs_embeds,
+                    text_features,
+                    has_description_tensor,
+                    self.text_dropout_p if self.training else 0.0
+                )
+                inputs_embeds = fused_feat
         
 
 

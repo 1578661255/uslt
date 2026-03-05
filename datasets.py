@@ -498,16 +498,25 @@ class S2T_Dataset(Base_Dataset):
                                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]), 
                                     ])
         
-        # 初始化描述加载器
+        # 初始化描述加载器和特征查表
         self.use_descriptions = getattr(args, 'use_descriptions', False)
-        if self.use_descriptions:
-            # 从 config 中获取描述文件基础路径
+        self.use_desc_feature = getattr(args, 'use_desc_feature', False)  # 新增参数
+        self.desc_feat_dict = None
+        if self.use_desc_feature:
+            # 直接加载特征查表
+            desc_feat_path = getattr(args, 'desc_feat_path', './script/desc_bert_features.pkl')
+            if os.path.exists(desc_feat_path):
+                with open(desc_feat_path, 'rb') as f:
+                    self.desc_feat_dict = pickle.load(f)
+                print(f"[描述特征] 已加载描述特征查表: {desc_feat_path}, 共{len(self.desc_feat_dict)}条")
+            else:
+                print(f"[警告] 描述特征文件不存在: {desc_feat_path}")
+                self.use_desc_feature = False
+        # 兼容原始描述文本加载
+        if self.use_descriptions and not self.use_desc_feature:
             if args.dataset in description_dirs:
-                # 使用 config 中的路径 + phase 子文件夹
                 desc_base_dir = Path(description_dirs[args.dataset])
-                desc_dir = desc_base_dir / phase  # 例如 ./description/CSL_Daily/split_data/train
-                
-                # 检查描述文件夹是否存在
+                desc_dir = desc_base_dir / phase
                 if desc_dir.exists():
                     self.desc_loader = DescriptionLoader(str(desc_dir))
                 else:
@@ -539,16 +548,37 @@ class S2T_Dataset(Base_Dataset):
         name_sample = sample['name']
         pose_sample, support_rgb_dict = self.load_pose(sample['video_path'])
         
-        # 加载和对齐描述文本
+        # 加载和对齐描述文本或特征
         descriptions = None
         has_description = None
-        if self.use_descriptions and self.desc_loader:
-            descriptions, has_description = self._load_and_align_descriptions(
-                name_sample, pose_sample
-            )
-        
-        # 返回扩展的元组（包含描述文本）
-        return name_sample, pose_sample, text, gloss, support_rgb_dict, descriptions, has_description
+        desc_features = None
+        if self.use_desc_feature and self.desc_feat_dict is not None:
+            # 先用原有对齐逻辑获得 descriptions
+            if self.use_descriptions and self.desc_loader:
+                descriptions, has_description = self._load_and_align_descriptions(
+                    name_sample, pose_sample
+                )
+            # 查表获得特征
+            if descriptions is not None:
+                desc_features = []
+                for desc in descriptions:
+                    if desc is not None and desc in self.desc_feat_dict:
+                        desc_features.append(self.desc_feat_dict[desc])
+                    else:
+                        # 若无特征则用全零向量占位
+                        desc_features.append(torch.zeros(768))
+                desc_features = torch.stack(desc_features)
+            else:
+                desc_features = None
+            # 返回特征而不是原始文本
+            return name_sample, pose_sample, text, gloss, support_rgb_dict, desc_features, has_description
+        else:
+            # 默认原始文本流程
+            if self.use_descriptions and self.desc_loader:
+                descriptions, has_description = self._load_and_align_descriptions(
+                    name_sample, pose_sample
+                )
+            return name_sample, pose_sample, text, gloss, support_rgb_dict, descriptions, has_description
     
     def load_pose(self, path):
         """加载姿态数据，并保存采样的帧索引用于描述对齐"""
