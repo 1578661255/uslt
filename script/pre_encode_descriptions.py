@@ -25,10 +25,16 @@ for phase in ['train', 'dev', 'test']:
             with open(os.path.join(phase_dir, fname), 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
-                # 自动处理两种格式
+                # 自动处理三种格式
+                descriptions = []
                 if isinstance(data, list):
-                    # 格式1：直接列表 [desc1, desc2, ...]
-                    descriptions = data
+                    # 格式1: 列表的字典 [{"filename": "xxx.jpg", "description": "desc"}, ...]
+                    for item in data:
+                        if isinstance(item, dict) and 'description' in item:
+                            descriptions.append(item['description'])
+                        elif isinstance(item, str):
+                            # 格式1b: 直接字符串列表 ["desc1", "desc2", ...]
+                            descriptions.append(item)
                 elif isinstance(data, dict):
                     # 格式2：字典 {"descriptions": [...]}
                     descriptions = data.get('descriptions', [])
@@ -39,7 +45,9 @@ for phase in ['train', 'dev', 'test']:
                 # 收集描述
                 for desc in descriptions:
                     if desc is not None and isinstance(desc, str):
-                        all_desc.add(desc.strip())
+                        desc_text = desc.strip()
+                        if desc_text:  # 跳过空字符串
+                            all_desc.add(desc_text)
         except Exception as e:
             print(f"[错误] 读取 {fname} 失败: {e}")
 
