@@ -210,7 +210,7 @@ class Uni_Sign(nn.Module):
         else:
             return contextlib.nullcontext()
     
-    def _encode_descriptions(self, descriptions, has_description, device):
+    def _encode_descriptions(self, descriptions, has_description, device, video_seq_len):
         """
         编码文本描述为特征向量
         
@@ -218,9 +218,10 @@ class Uni_Sign(nn.Module):
             descriptions: List[List[str or None]]，形状为 (batch_size, sequence_length)
             has_description: List[List[int]] or Tensor，缺失指示符 (1=有描述, 0=缺失)
             device: 设备（CPU/GPU）
+            video_seq_len: int，视频序列长度（用于对齐 text_features）
         
         返回：
-            text_features: Tensor，形状为 (batch_size, sequence_length, text_feature_dim)
+            text_features: Tensor，形状为 (batch_size, video_seq_len, text_feature_dim)
             has_description_cleaned: List[List[int]]，清洁后的缺失指示符
         """
         batch_size = len(descriptions)
@@ -246,8 +247,8 @@ class Uni_Sign(nn.Module):
                 else:
                     has_description_cleaned.append([1] * len(descriptions[b]))
         
-        # 重新计算序列长度（所有序列统一长度）
-        max_seq_len = max((len(d) for d in descriptions_cleaned), default=1)
+        # 使用视频序列长度而非描述序列长度
+        max_seq_len = video_seq_len
         
         # 初始化输出特征张量
         text_features = torch.zeros(batch_size, max_seq_len, self.text_feature_dim, device=device)
@@ -423,21 +424,28 @@ class Uni_Sign(nn.Module):
             if has_description is None:
                 has_description = [[1] * len(desc_list) for desc_list in descriptions]
             
-            # 编码文本描述
-            text_features, has_description_cleaned = self._encode_descriptions(descriptions, has_description, inputs_embeds.device)
+            # 编码文本描述（传递视频序列长度以确保对齐）
+            text_features, has_description_cleaned = self._encode_descriptions(
+                descriptions, has_description, inputs_embeds.device, inputs_embeds.shape[1]
+            )
+            
+            # 将 text_features 转换为正确的 dtype（可能是 bfloat16）
+            text_features = text_features.to(inputs_embeds.dtype)
             
             # 应用文本 Dropout（训练时的正则化）
             if self.training and self.text_dropout_p > 0:
                 text_features = self._apply_text_dropout(text_features, has_description_cleaned, self.text_dropout_p)
             
-            # 将清洁后的 has_description 转换为 tensor（形状：B, T, 1）
+            # 将清洁后的 has_description 转换为 tensor（长度对齐到视频序列）
             has_description_tensor = []
             for b, has_desc_list in enumerate(has_description_cleaned):
-                padded = has_desc_list + [0] * (text_features.shape[1] - len(has_desc_list))
-                has_description_tensor.append(padded)
+                # 确保长度与 inputs_embeds 一致
+                padded = has_desc_list + [0] * (inputs_embeds.shape[1] - len(has_desc_list))
+                has_description_tensor.append(padded[:inputs_embeds.shape[1]])  # 截断超出部分
+            
             has_description_tensor = torch.tensor(
                 has_description_tensor, 
-                dtype=torch.float32, 
+                dtype=inputs_embeds.dtype,  # 使用相同 dtype（可能是 bfloat16）
                 device=inputs_embeds.device
             ).unsqueeze(-1)  # (B, T) → (B, T, 1)
             

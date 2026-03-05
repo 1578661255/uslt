@@ -638,8 +638,35 @@ class GatingFusion(nn.Module):
         # 规范化 has_description 的形状
         if has_description.dim() == 2:
             has_description = has_description.unsqueeze(-1)
+        
+        # 处理形状不匹配的情况（可能因为 text_feat 长度不同）
+        if has_description.shape[1] != T:
+            if has_description.shape[1] > T:
+                # 截断到 T
+                has_description = has_description[:, :T, :]
+            else:
+                # 补零到 T
+                pad_size = T - has_description.shape[1]
+                has_description = torch.cat([
+                    has_description,
+                    torch.zeros(B, pad_size, 1, device=has_description.device, dtype=has_description.dtype)
+                ], dim=1)
+        
         assert has_description.shape == (B, T, 1), \
             f"形状错误：expected (B, T, 1), got {has_description.shape}"
+        
+        # 处理 text_feat 的形状不匹配
+        if text_feat.shape[1] != T:
+            if text_feat.shape[1] > T:
+                # 截断到 T
+                text_feat = text_feat[:, :T, :]
+            else:
+                # 补零到 T
+                pad_size = T - text_feat.shape[1]
+                text_feat = torch.cat([
+                    text_feat,
+                    torch.zeros(B, pad_size, text_feat.shape[2], device=text_feat.device, dtype=text_feat.dtype)
+                ], dim=1)
         
         # 应用 Text Dropout (仅训练时)
         # 概率为 text_dropout_p 的文本特征被随机清为 0
