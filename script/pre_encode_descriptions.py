@@ -1,5 +1,6 @@
 import os
 import pickle
+import json
 import torch
 from tqdm import tqdm
 from transformers import BertTokenizer, BertModel
@@ -13,16 +14,34 @@ all_desc = set()
 for phase in ['train', 'dev', 'test']:
     phase_dir = os.path.join(desc_dir, phase)
     if not os.path.exists(phase_dir):
+        print(f"[警告] {phase} 目录不存在: {phase_dir}")
         continue
+    
+    print(f"[开始] 扫描 {phase} 数据...")
     for fname in os.listdir(phase_dir):
         if not fname.endswith('.json'):
             continue
-        with open(os.path.join(phase_dir, fname), 'r', encoding='utf-8') as f:
-            import json
-            data = json.load(f)
-            for desc in data.get('descriptions', []):
-                if desc is not None:
-                    all_desc.add(desc)
+        try:
+            with open(os.path.join(phase_dir, fname), 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+                # 自动处理两种格式
+                if isinstance(data, list):
+                    # 格式1：直接列表 [desc1, desc2, ...]
+                    descriptions = data
+                elif isinstance(data, dict):
+                    # 格式2：字典 {"descriptions": [...]}
+                    descriptions = data.get('descriptions', [])
+                else:
+                    print(f"[警告] 未知格式 {fname}: {type(data)}")
+                    continue
+                
+                # 收集描述
+                for desc in descriptions:
+                    if desc is not None and isinstance(desc, str):
+                        all_desc.add(desc.strip())
+        except Exception as e:
+            print(f"[错误] 读取 {fname} 失败: {e}")
 
 all_desc = list(all_desc)
 print(f"共收集到唯一描述文本 {len(all_desc)} 条")
@@ -44,6 +63,8 @@ with torch.no_grad():
         feat = outputs.last_hidden_state[:, 0, :].squeeze(0).cpu()
         desc2feat[desc] = feat
 
-with open(output_path, 'wb'):
-    pickle.dump(desc2feat, open(output_path, 'wb'))
+# 保存到 pickle 文件
+with open(output_path, 'wb') as f:
+    pickle.dump(desc2feat, f)
 print(f"已保存到 {output_path}")
+print(f"特征字典包含 {len(desc2feat)} 条描述")
