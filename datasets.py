@@ -13,7 +13,7 @@ import json
 import pathlib
 from pathlib import Path
 from torchvision import transforms
-from config import rgb_dirs, pose_dirs, description_dirs
+from config import rgb_dirs, pose_dirs, description_dirs, desc_feat_paths
 from temporal_alignment import DescriptionLoader, TemporalAligner
 
 # load sub-pose
@@ -503,8 +503,13 @@ class S2T_Dataset(Base_Dataset):
         self.use_desc_feature = getattr(args, 'use_desc_feature', False)  # 新增参数
         self.desc_feat_dict = None
         if self.use_desc_feature:
-            # 直接加载特征查表
-            desc_feat_path = getattr(args, 'desc_feat_path', './script/desc_bert_features.pkl')
+            # 优先从 config.py 读取，其次从命令行参数读取
+            desc_feat_path = None
+            if args.dataset in desc_feat_paths:
+                desc_feat_path = desc_feat_paths[args.dataset]
+            else:
+                desc_feat_path = getattr(args, 'desc_feat_path', './script/desc_bert_features.pkl')
+            
             if os.path.exists(desc_feat_path):
                 with open(desc_feat_path, 'rb') as f:
                     self.desc_feat_dict = pickle.load(f)

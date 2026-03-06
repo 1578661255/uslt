@@ -48,3 +48,12 @@ pose_dirs = {
 description_dirs = {
             "CSL_Daily": "./description/CSL-Daily/split_data",
 }
+
+# 预编码描述特征文件路径（BERT 编码后的特征，加速训练）
+desc_feat_paths = {
+            "CSL_Daily": "./script/desc_bert_features.pkl",
+            "CSL_News": "./script/desc_bert_features_csl_news.pkl",
+            "WLASL": "./script/desc_bert_features_wlasl.pkl",
+            "How2Sign": "./script/desc_bert_features_how2sign.pkl",
+            "OpenASL": "./script/desc_bert_features_openasl.pkl",
+}
