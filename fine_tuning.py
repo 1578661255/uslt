@@ -109,6 +109,8 @@ def main(args):
     print(optimizer)
 
     output_dir = Path(args.output_dir)
+    if args.output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     start_time = time.time()
     max_accuracy = 0
