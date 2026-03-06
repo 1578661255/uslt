@@ -178,11 +178,19 @@ class Uni_Sign(nn.Module):
             # 设置文本特征维度
             self.text_feature_dim = encoder_output_dims.get(encoder_type, 768)
             
-            # 融合模块（学习权重融合）
-            self.gating_fusion = GatingFusion(
-                feature_dim=768,
-                gating_hidden_dim=512
-            )
+            # 融合方式选择（消融实验）
+            self.fusion_type = getattr(args, 'fusion_type', 'gating').lower()
+            if self.fusion_type == 'gating':
+                # 融合模块（学习权重融合）
+                self.gating_fusion = GatingFusion(
+                    feature_dim=768,
+                    gating_hidden_dim=512
+                )
+            elif self.fusion_type == 'direct':
+                # 直接融合：无可学习参数，仅做加法
+                pass
+            else:
+                raise ValueError(f"未知的融合方式: {self.fusion_type}，支持 'gating' 或 'direct'")
             
             # 缺失描述处理（可学习的占位符）
             self.mask_embedding = LearnableMaskEmbedding(hidden_dim=self.text_feature_dim)
@@ -434,14 +442,21 @@ class Uni_Sign(nn.Module):
                         has_description_tensor = torch.tensor(has_description, dtype=inputs_embeds.dtype, device=inputs_embeds.device)
                 if has_description_tensor.dim() == 2:
                     has_description_tensor = has_description_tensor.unsqueeze(-1)
-                # 融合
-                fused_feat, gate_weights = self.gating_fusion(
-                    inputs_embeds,
-                    text_features,
-                    has_description_tensor,
-                    self.text_dropout_p if self.training else 0.0
-                )
-                inputs_embeds = fused_feat
+                
+                # 选择融合方式
+                if self.fusion_type == 'gating':
+                    # 门控融合：inputs_embeds + gate * text_features
+                    fused_feat, gate_weights = self.gating_fusion(
+                        inputs_embeds,
+                        text_features,
+                        has_description_tensor,
+                        self.text_dropout_p if self.training else 0.0
+                    )
+                    inputs_embeds = fused_feat
+                elif self.fusion_type == 'direct':
+                    # 直接融合：inputs_embeds + text_features
+                    # 需要掩码处理：只融合有描述的位置
+                    inputs_embeds = inputs_embeds + text_features * has_description_tensor
             else:
                 # 2. 原始文本描述，走动态编码
                 if has_description is None:
@@ -461,13 +476,21 @@ class Uni_Sign(nn.Module):
                     dtype=inputs_embeds.dtype,
                     device=inputs_embeds.device
                 ).unsqueeze(-1)
-                fused_feat, gate_weights = self.gating_fusion(
-                    inputs_embeds,
-                    text_features,
-                    has_description_tensor,
-                    self.text_dropout_p if self.training else 0.0
-                )
-                inputs_embeds = fused_feat
+                
+                # 选择融合方式
+                if self.fusion_type == 'gating':
+                    # 门控融合：inputs_embeds + gate * text_features
+                    fused_feat, gate_weights = self.gating_fusion(
+                        inputs_embeds,
+                        text_features,
+                        has_description_tensor,
+                        self.text_dropout_p if self.training else 0.0
+                    )
+                    inputs_embeds = fused_feat
+                elif self.fusion_type == 'direct':
+                    # 直接融合：inputs_embeds + text_features
+                    # 需要掩码处理：只融合有描述的位置
+                    inputs_embeds = inputs_embeds + text_features * has_description_tensor
         
 
 

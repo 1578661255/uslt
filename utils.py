@@ -544,6 +544,9 @@ def get_args_parser():
                         help='文本描述的 dropout 概率，用于训练时的正则化')
     parser.add_argument("--text_encoder_freeze", action='store_true',
                         help='冻结 TextEncoder 的参数（仅进行推理）')
+    parser.add_argument("--fusion_type", default='gating', type=str,
+                        choices=['gating', 'direct'],
+                        help='多模态融合方式：gating（门控融合，可学习权重）或 direct（直接融合）')
     parser.add_argument("--use_desc_feature", action='store_true',
                         help='使用预编码的描述特征而非动态编码（大幅加速）')
     parser.add_argument("--desc_feat_path", default='./script/desc_bert_features.pkl', type=str,
