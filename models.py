@@ -12,7 +12,7 @@ from deformable_attention_2d import DeformableAttention2D
 from transformers import MT5ForConditionalGeneration, T5Tokenizer 
 import warnings
 from config import mt5_path
-from text_fusion_modules import create_text_encoder, GatingFusion, LearnableMaskEmbedding
+from text_fusion_modules import create_text_encoder, GatingFusion, CrossAttentionFusion, LearnableMaskEmbedding
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Cut & paste from PyTorch official master until it's in a few official releases - RW
@@ -189,8 +189,16 @@ class Uni_Sign(nn.Module):
             elif self.fusion_type == 'direct':
                 # 直接融合：无可学习参数，仅做加法
                 pass
+            elif self.fusion_type == 'cross_attention':
+                # Cross-Attention 融合：使用自注意力机制
+                self.cross_attn_fusion = CrossAttentionFusion(
+                    feature_dim=768,
+                    num_heads=8,
+                    dropout=0.1,
+                    use_bidirectional=True  # 双向融合，更强表现
+                )
             else:
-                raise ValueError(f"未知的融合方式: {self.fusion_type}，支持 'gating' 或 'direct'")
+                raise ValueError(f"未知的融合方式: {self.fusion_type}，支持 'gating'、'direct' 或 'cross_attention'")
             
             # 缺失描述处理（可学习的占位符）
             self.mask_embedding = LearnableMaskEmbedding(hidden_dim=self.text_feature_dim)
@@ -457,6 +465,14 @@ class Uni_Sign(nn.Module):
                     # 直接融合：inputs_embeds + text_features
                     # 需要掩码处理：只融合有描述的位置
                     inputs_embeds = inputs_embeds + text_features * has_description_tensor
+                elif self.fusion_type == 'cross_attention':
+                    # Cross-Attention 融合：使用自注意力机制对齐并融合特征
+                    fused_feat, attn_weights = self.cross_attn_fusion(
+                        pose_feat=inputs_embeds,
+                        text_feat=text_features,
+                        has_description=has_description_tensor
+                    )
+                    inputs_embeds = fused_feat
             else:
                 # 2. 原始文本描述，走动态编码
                 if has_description is None:
@@ -491,6 +507,14 @@ class Uni_Sign(nn.Module):
                     # 直接融合：inputs_embeds + text_features
                     # 需要掩码处理：只融合有描述的位置
                     inputs_embeds = inputs_embeds + text_features * has_description_tensor
+                elif self.fusion_type == 'cross_attention':
+                    # Cross-Attention 融合：使用自注意力机制对齐并融合特征
+                    fused_feat, attn_weights = self.cross_attn_fusion(
+                        pose_feat=inputs_embeds,
+                        text_feat=text_features,
+                        has_description=has_description_tensor
+                    )
+                    inputs_embeds = fused_feat
         
 
 

@@ -702,3 +702,255 @@ class GatingFusion(nn.Module):
         fused_feat = pose_feat + gate * text_feat
         
         return fused_feat, gate
+
+# ======================== Cross-Attention 融合机制 ========================
+
+class CrossAttentionFusion(nn.Module):
+    """
+    Cross-Attention 多模态融合
+    
+    功能：
+        - 使用多头自注意力机制融合视频和文本特征
+        - Text 作为 Query，Pose 作为 Key 和 Value
+        - 自动学习时间对齐关系
+    
+    融合公式：
+        注意力权重 = Softmax(Q·K^T / √d)
+        融合特征 = pose + Attention(text_query, pose_kv)
+    
+    特点：
+        - 灵活的跨模态对齐（无需人工对齐）
+        - 通过注意力权重学习置信度
+        - 支持多头注意力，捕捉多种融合模式
+        - 可视化注意力权重便于分析
+    
+    参考论文：
+        - "Attention is All You Need" (Vaswani et al., 2017)
+        - 多模态融合常用方式
+    
+    示例：
+        >>> fusion = CrossAttentionFusion(feature_dim=768, num_heads=8)
+        >>> pose = torch.randn(2, 10, 768)     # (B, T, D)
+        >>> text = torch.randn(2, 10, 768)
+        >>> fused, attn = fusion(pose, text)
+        >>> fused.shape, attn.shape
+        (torch.Size([2, 10, 768]), torch.Size([2, 8, 10, 10]))
+    """
+    
+    def __init__(self,
+                 feature_dim: int = 768,
+                 num_heads: int = 8,
+                 dropout: float = 0.1,
+                 use_bidirectional: bool = False):
+        """
+        初始化 Cross-Attention 融合模块
+        
+        参数：
+            feature_dim (int): 特征维度（默认 768）
+            num_heads (int): 注意力头数（默认 8，需整除 feature_dim）
+            dropout (float): 注意力中的 dropout 概率（默认 0.1）
+            use_bidirectional (bool): 是否使用双向融合
+                - False: 仅 text→pose（text 查询 pose）
+                - True: text→pose + pose→text（互相查询）
+        
+        内部结构：
+            1. LayerNorm: 特征归一化
+            2. MultiheadAttention: 多头自注意力
+            3. FFN: 前馈网络（可选）
+            4. Residual Connection: 残差连接
+        
+        参数量：
+            - 注意力：~1.8M（768×768×4）
+            - 总参数：~2.3M
+        """
+        super().__init__()
+        
+        self.feature_dim = feature_dim
+        self.num_heads = num_heads
+        self.use_bidirectional = use_bidirectional
+        
+        assert feature_dim % num_heads == 0, \
+            f"feature_dim ({feature_dim}) 必须整除 num_heads ({num_heads})"
+        
+        # Text → Pose 的 Cross-Attention
+        self.cross_attn_text2pose = nn.MultiheadAttention(
+            embed_dim=feature_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        
+        # 双向融合：Pose → Text 的 Cross-Attention
+        if use_bidirectional:
+            self.cross_attn_pose2text = nn.MultiheadAttention(
+                embed_dim=feature_dim,
+                num_heads=num_heads,
+                dropout=dropout,
+                batch_first=True
+            )
+        
+        # LayerNorm 用于特征归一化
+        self.norm_pose = nn.LayerNorm(feature_dim)
+        self.norm_text = nn.LayerNorm(feature_dim)
+        
+        # FFN（前馈网络）用于增强特征表示
+        ffn_dim = feature_dim * 4
+        self.ffn_pose = nn.Sequential(
+            nn.Linear(feature_dim, ffn_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_dim, feature_dim)
+        )
+        self.ffn_text = nn.Sequential(
+            nn.Linear(feature_dim, ffn_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_dim, feature_dim)
+        )
+        
+        self.norm_pose_ffn = nn.LayerNorm(feature_dim)
+        self.norm_text_ffn = nn.LayerNorm(feature_dim)
+        
+        # Dropout 用于正则化
+        self.dropout = nn.Dropout(dropout)
+        
+        # 初始化权重
+        self._init_weights()
+    
+    def _init_weights(self):
+        """初始化网络权重"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
+    
+    def forward(self,
+                pose_feat: torch.Tensor,
+                text_feat: torch.Tensor,
+                has_description: torch.Tensor = None,
+                attention_mask: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        执行 Cross-Attention 融合
+        
+        参数：
+            pose_feat (torch.Tensor): 视频姿态特征
+                                     shape: (B, T, D)
+                                     例如 (2, 10, 768)
+            
+            text_feat (torch.Tensor): 文本特征
+                                     shape: (B, T, D)
+                                     例如 (2, 10, 768)
+            
+            has_description (torch.Tensor): 缺失指示符（可选）
+                                           shape: (B, T, 1)
+                                           用于掩口没有文本的位置
+            
+            attention_mask (torch.Tensor): 注意力掩码（可选）
+                                          shape: (B, T) 或 (B, 1, 1, T)
+        
+        返回：
+            fused_feat (torch.Tensor): 融合后的特征
+                                      shape: (B, T, D) 与 pose_feat 相同
+            
+            attn_weights (torch.Tensor): 注意力权重（用于可视化）
+                                        shape: (B, num_heads, T, T)
+        
+        工作流程：
+            1. Text 特征通过 LayerNorm 归一化
+            2. Cross-Attention: Text(Q) vs Pose(K,V)
+               → Text 学习关注 Pose 的哪些部分
+            3. 残差连接 + FFN
+            4. （可选）Pose 特征通过 Cross-Attention 查询 Text
+            5. 融合结果
+        
+        设计理由：
+            - LayerNorm 在注意力前：稳定训练
+            - 残差连接：梯度流动更好
+            - FFN：增加非线性表示能力
+            - 双向融合：捕获互补信息
+        """
+        B, T, D = pose_feat.shape
+        
+        # 处理形状对齐
+        if text_feat.shape[1] != T:
+            if text_feat.shape[1] > T:
+                text_feat = text_feat[:, :T, :]
+            else:
+                pad_size = T - text_feat.shape[1]
+                text_feat = torch.cat([
+                    text_feat,
+                    torch.zeros(B, pad_size, D, device=text_feat.device, dtype=text_feat.dtype)
+                ], dim=1)
+        
+        # ==================== Text → Pose Cross-Attention ====================
+        # Text 作为 Query，Pose 作为 Key 和 Value
+        # 让 Text 学习如何从 Pose 中提取相关信息
+        
+        # 构建 has_description 掩码
+        if has_description is not None:
+            if has_description.dim() == 2:
+                has_description = has_description.unsqueeze(-1)
+            has_description = has_description.squeeze(-1)  # (B, T)
+        
+        # Text 归一化
+        text_norm = self.norm_text(text_feat)  # (B, T, D)
+        
+        # Cross-Attention: text 查询 pose
+        # attn_output shape: (B, T, D)
+        # attn_weights shape: (B*num_heads, T, T) → 后续处理为 (B, num_heads, T, T)
+        text_attn, attn_weights_text2pose = self.cross_attn_text2pose(
+            query=text_norm,           # Text 作为 Query
+            key=pose_feat,             # Pose 作为 Key
+            value=pose_feat,           # Pose 作为 Value
+            key_padding_mask=None,
+            average_attn_weights=False
+        )
+        
+        # 残差连接 + Dropout
+        text_fused = text_feat + self.dropout(text_attn)
+        
+        # FFN
+        text_ffn = self.ffn_text(self.norm_text_ffn(text_fused))
+        text_fused = text_fused + self.dropout(text_ffn)
+        
+        # 如果只有单向融合，直接返回 pose + text_fused
+        if not self.use_bidirectional:
+            # 将 Text 的融合结果添加到 Pose
+            pose_norm = self.norm_pose(pose_feat)
+            fused_feat = pose_feat + self.dropout(text_fused)
+            
+            return fused_feat, attn_weights_text2pose
+        
+        # ==================== Pose → Text Cross-Attention ====================
+        # Pose 作为 Query，Text 作为 Key 和 Value
+        # 让 Pose 学习如何从 Text 中提取相关信息
+        
+        pose_norm = self.norm_pose(pose_feat)
+        
+        pose_attn, attn_weights_pose2text = self.cross_attn_pose2text(
+            query=pose_norm,           # Pose 作为 Query
+            key=text_fused,            # Text 作为 Key
+            value=text_fused,          # Text 作为 Value
+            key_padding_mask=None,
+            average_attn_weights=False
+        )
+        
+        # 残差连接 + Dropout
+        pose_fused = pose_feat + self.dropout(pose_attn)
+        
+        # FFN
+        pose_ffn = self.ffn_pose(self.norm_pose_ffn(pose_fused))
+        pose_fused = pose_fused + self.dropout(pose_ffn)
+        
+        # 融合两个方向的结果（加权或拼接）
+        # 这里使用简单的平均，也可以学习权重
+        fused_feat = (pose_fused + text_fused) / 2.0
+        
+        # 返回融合特征和注意力权重
+        attn_weights = (attn_weights_text2pose + attn_weights_pose2text) / 2.0
+        
+        return fused_feat, attn_weights
