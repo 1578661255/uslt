@@ -456,6 +456,14 @@ def get_args_parser():
 
     # * Finetuning params
     parser.add_argument('--finetune', default='', help='finetune from checkpoint')
+    
+    # * Dataset parameters
+    parser.add_argument('--max_samples', type=int, default=None,
+                        help='最多使用的数据集样本数（仅限训练集，None=使用全部）')
+    parser.add_argument('--dataset_ratio', type=float, default=1.0,
+                        help='数据集比例（0-1，如0.1表示使用10%%的数据），与 --max_samples 不兼容')
+    parser.add_argument('--seed_subset', type=int, default=42,
+                        help='数据集子集采样的随机种子，使不同运行可重现')
 
     # * Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',

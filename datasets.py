@@ -336,6 +336,48 @@ def load_video_support_rgb(path, tmp):
 
 # build base dataset
 class Base_Dataset(Dataset.Dataset):
+    def _apply_dataset_subset(self, args, phase):
+        """
+        根据参数限制数据集大小，用于快速调试
+        
+        参数：
+            args: 命令行参数对象
+            phase: 数据阶段 ('train', 'dev', 'test')
+        
+        支持两种方式：
+            1. --max_samples: 设置绝对样本数（仅对 train 生效）
+            2. --dataset_ratio: 设置比例（0-1），如 0.1 表示使用 10% 的数据
+        """
+        original_size = len(self.list)
+        
+        # 尝试从参数获取值
+        max_samples = getattr(args, 'max_samples', None)
+        dataset_ratio = getattr(args, 'dataset_ratio', 1.0)
+        seed_subset = getattr(args, 'seed_subset', 42)
+        
+        # 确定实际要使用的样本数
+        if max_samples is not None and max_samples > 0 and phase == 'train':
+            # 使用绝对数量（仅对训练集）
+            target_size = min(max_samples, original_size)
+            print(f"[数据集] {phase} 集: 限制样本数为 {target_size} (原始: {original_size})")
+        elif dataset_ratio is not None and 0 < dataset_ratio < 1.0:
+            # 使用比例
+            target_size = max(1, int(original_size * dataset_ratio))
+            print(f"[数据集] {phase} 集: 使用 {dataset_ratio*100:.1f}% 的数据，样本数为 {target_size} (原始: {original_size})")
+        else:
+            # 使用全部数据
+            if original_size != len(self.list):
+                print(f"[数据集] {phase} 集已被限制，当前样本数: {len(self.list)}")
+            return
+        
+        # 根据 seed 进行随机采样（确保可复现）
+        if target_size < original_size:
+            import random
+            random.seed(seed_subset)
+            selected_indices = sorted(random.sample(range(original_size), target_size))
+            self.list = [self.list[i] for i in selected_indices]
+            print(f"  → 实际样本数: {len(self.list)}")
+    
     def collate_fn(self, batch):
         # 初始化批次数据
         tgt_batch, src_length_batch, name_batch, pose_tmp, gloss_batch = [], [], [], [], []
@@ -492,7 +534,10 @@ class S2T_Dataset(Base_Dataset):
             raise NotImplementedError
 
         self.list = list(self.raw_data.keys())
-
+        
+        # 支持小规模数据集训练（便于快速调试）
+        self._apply_dataset_subset(args, phase)
+        
         self.data_transform = transforms.Compose([
                                     transforms.ToTensor(),
                                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]), 
@@ -714,6 +759,35 @@ class S2T_Dataset_news(Base_Dataset):
         else:
             self.start_idx = int(sum_sample * 0.99)
             self.end_idx = int(sum_sample)
+        
+        # 支持小规模数据集训练（便于快速调试）
+        self._apply_dataset_subset_news(args, phase)
+        
+    def _apply_dataset_subset_news(self, args, phase):
+        """
+        为 CSL_News 数据集添加子集支持
+        """
+        original_size = self.end_idx - self.start_idx
+        
+        max_samples = getattr(args, 'max_samples', None)
+        dataset_ratio = getattr(args, 'dataset_ratio', 1.0)
+        seed_subset = getattr(args, 'seed_subset', 42)
+        
+        # 确定实际要使用的样本数
+        if max_samples is not None and max_samples > 0 and phase == 'train':
+            target_size = min(max_samples, original_size)
+            print(f"[数据集] {phase} 集: 限制样本数为 {target_size} (原始: {original_size})")
+        elif dataset_ratio is not None and 0 < dataset_ratio < 1.0:
+            target_size = max(1, int(original_size * dataset_ratio))
+            print(f"[数据集] {phase} 集: 使用 {dataset_ratio*100:.1f}% 的数据，样本数为 {target_size} (原始: {original_size})")
+        else:
+            return
+        
+        # 调整 end_idx 来限制样本数
+        if target_size < original_size:
+            self.end_idx = self.start_idx + target_size
+            print(f"  → 实际样本数: {self.end_idx - self.start_idx}")
+
         
     def __len__(self):
         return self.end_idx - self.start_idx
