@@ -544,6 +544,10 @@ def get_args_parser():
                         help='文本描述的 dropout 概率，用于训练时的正则化')
     parser.add_argument("--text_encoder_freeze", action='store_true',
                         help='冻结 TextEncoder 的参数（仅进行推理）')
+    parser.add_argument("--use_desc_feature", action='store_true',
+                        help='使用预编码的描述特征而非动态编码（大幅加速）')
+    parser.add_argument("--desc_feat_path", default='./script/desc_bert_features.pkl', type=str,
+                        help='预编码描述特征文件路径（与 --use_desc_feature 配合使用）')
     parser.add_argument("--fusion_checkpoint", default="", type=str,
                         help='多模态融合模块的检查点路径（可选）')
 
