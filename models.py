@@ -205,6 +205,9 @@ class Uni_Sign(nn.Module):
             
             # 文本 Dropout（防止过拟合）
             self.text_dropout_p = getattr(args, 'text_dropout_p', 0.1)
+            
+            # 注意力可视化标志
+            self.return_attention_weights = getattr(args, 'return_attention_weights', False)
     
         
     def _init_weights(self, m):
@@ -451,6 +454,9 @@ class Uni_Sign(nn.Module):
                 if has_description_tensor.dim() == 2:
                     has_description_tensor = has_description_tensor.unsqueeze(-1)
                 
+                # 融合并追踪注意力权重
+                fusion_attn_weights = None
+                
                 # 选择融合方式
                 if self.fusion_type == 'gating':
                     # 门控融合：inputs_embeds + gate * text_features
@@ -461,10 +467,17 @@ class Uni_Sign(nn.Module):
                         self.text_dropout_p if self.training else 0.0
                     )
                     inputs_embeds = fused_feat
+                    # 将门控权重保存为可视化信息
+                    if self.return_attention_weights:
+                        fusion_attn_weights = gate_weights  # (B, T, 1)
+                        
                 elif self.fusion_type == 'direct':
                     # 直接融合：inputs_embeds + text_features
                     # 需要掩码处理：只融合有描述的位置
                     inputs_embeds = inputs_embeds + text_features * has_description_tensor
+                    if self.return_attention_weights:
+                        fusion_attn_weights = has_description_tensor
+                        
                 elif self.fusion_type == 'cross_attention':
                     # Cross-Attention 融合：使用自注意力机制对齐并融合特征
                     fused_feat, attn_weights = self.cross_attn_fusion(
@@ -473,6 +486,9 @@ class Uni_Sign(nn.Module):
                         has_description=has_description_tensor
                     )
                     inputs_embeds = fused_feat
+                    # 保存注意力权重用于可视化
+                    if self.return_attention_weights:
+                        fusion_attn_weights = attn_weights  # (B, num_heads, T, T)
             else:
                 # 2. 原始文本描述，走动态编码
                 if has_description is None:
@@ -493,6 +509,9 @@ class Uni_Sign(nn.Module):
                     device=inputs_embeds.device
                 ).unsqueeze(-1)
                 
+                # 融合并追踪注意力权重
+                fusion_attn_weights = None
+                
                 # 选择融合方式
                 if self.fusion_type == 'gating':
                     # 门控融合：inputs_embeds + gate * text_features
@@ -503,10 +522,17 @@ class Uni_Sign(nn.Module):
                         self.text_dropout_p if self.training else 0.0
                     )
                     inputs_embeds = fused_feat
+                    # 将门控权重保存为可视化信息
+                    if self.return_attention_weights:
+                        fusion_attn_weights = gate_weights  # (B, T, 1)
+                        
                 elif self.fusion_type == 'direct':
                     # 直接融合：inputs_embeds + text_features
                     # 需要掩码处理：只融合有描述的位置
                     inputs_embeds = inputs_embeds + text_features * has_description_tensor
+                    if self.return_attention_weights:
+                        fusion_attn_weights = has_description_tensor
+                        
                 elif self.fusion_type == 'cross_attention':
                     # Cross-Attention 融合：使用自注意力机制对齐并融合特征
                     fused_feat, attn_weights = self.cross_attn_fusion(
@@ -515,9 +541,12 @@ class Uni_Sign(nn.Module):
                         has_description=has_description_tensor
                     )
                     inputs_embeds = fused_feat
+                    # 保存注意力权重用于可视化
+                    if self.return_attention_weights:
+                        fusion_attn_weights = attn_weights  # (B, num_heads, T, T)
+        else:
+            fusion_attn_weights = None
         
-
-
         # 生成前缀 Token
         prefix_token = self.mt5_tokenizer(
                                 [f"Translate sign language video to {self.lang}: "] * len(tgt_input["gt_sentence"]),
@@ -565,6 +594,10 @@ class Uni_Sign(nn.Module):
             'attention_mask':attention_mask,
             'loss':loss,
         }
+        
+        # 添加注意力权重用于可视化
+        if self.return_attention_weights and 'fusion_attn_weights' in locals() and fusion_attn_weights is not None:
+            stack_out['fusion_attention_weights'] = fusion_attn_weights
 
         return stack_out
     
