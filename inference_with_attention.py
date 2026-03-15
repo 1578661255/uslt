@@ -53,32 +53,59 @@ class AttentionInferenceEngine:
         
         checkpoint = torch.load(model_path, map_location=self.device)
         
-        # 构建模型
-        args_dict = {
-            'rgb_support': True,
-            'use_descriptions': True,
-            'fusion_type': 'cross_attention',
-            'text_dropout_p': 0.0,
-            'text_encoder_freeze': False,
-        }
+        # 尝试从checkpoint中恢复args，如果没有则使用默认值
+        if 'args' in checkpoint:
+            args = checkpoint['args']
+        else:
+            # 使用完整的默认配置
+            class Args:
+                pass
+            
+            args = Args()
+            # 必需的参数
+            args.hidden_dim = 256
+            args.dataset = 'CSL_Daily'
+            args.device = self.device
+            args.label_smoothing = 0.1
+            
+            # RGB支持（自动检测）
+            args.rgb_support = True
+            
+            # 多模态融合配置
+            args.use_descriptions = True
+            args.use_desc_feature = True  # 离线特征模式
+            args.encoder_type = 'mt5'  # 文本编码器类型
+            args.fusion_type = 'cross_attention'  # 融合方式
+            args.text_dropout_p = 0.0  # 推理时关闭dropout
+            args.text_encoder_freeze = False
+            
+            # 注意力可视化
+            args.return_attention_weights = True
         
-        class Args:
-            pass
-        
-        args = Args()
-        for k, v in args_dict.items():
-            setattr(args, k, v)
+        # 确保必要的属性存在
+        if not hasattr(args, 'return_attention_weights'):
+            args.return_attention_weights = True
+        if not hasattr(args, 'device'):
+            args.device = self.device
+        if not hasattr(args, 'hidden_dim'):
+            args.hidden_dim = 256
+        if not hasattr(args, 'dataset'):
+            args.dataset = 'CSL_Daily'
         
         self.model = Uni_Sign(args)
         
+        # 加载权重
         if 'model_state_dict' in checkpoint:
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            state_dict = checkpoint['model_state_dict']
         else:
-            self.model.load_state_dict(checkpoint)
+            state_dict = checkpoint
+        
+        # 处理可能的键名前缀不匹配
+        self.model.load_state_dict(state_dict, strict=False)
         
         self.model.to(self.device)
         self.model.eval()
-        print(f"[模型加载完成]")
+        print(f"[模型加载完成] 融合方式: {getattr(args, 'fusion_type', 'unknown')}")
     
     def extract_attention(self, 
                          src_input: Dict,
