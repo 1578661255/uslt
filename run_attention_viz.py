@@ -82,8 +82,8 @@ def main():
         # 加载数据集
         print("[2/3] 加载数据集...")
         try:
-            from datasets import S2T_Dataset_CSL_Daily
-            dataset = S2T_Dataset_CSL_Daily(
+            from datasets import S2T_Dataset
+            dataset = S2T_Dataset(
                 split='dev',
                 use_descriptions=True,
                 use_desc_feature=True

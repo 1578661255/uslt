@@ -87,7 +87,7 @@ def method_C_advanced():
     import torch
     import cv2
     from models import Uni_Sign
-    from datasets import S2T_Dataset_CSL_Daily
+    from datasets import S2T_Dataset
     from attention_visualization import AttentionVisualizer
     
     print("\n方式C: 高级自定义分析")
@@ -125,7 +125,7 @@ def method_C_advanced():
     print("✓ 模型加载完成")
     
     # 2. 加载数据集
-    dataset = S2T_Dataset_CSL_Daily(split='dev', use_descriptions=True, use_desc_feature=True)
+    dataset = S2T_Dataset(split='dev', use_descriptions=True, use_desc_feature=True)
     print(f"✓ 数据集加载完成 (大小: {len(dataset)})")
     
     # 3. 初始化可视化工具

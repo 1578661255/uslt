@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from models import Uni_Sign
-from datasets import S2T_Dataset_CSL_Daily
+from datasets import S2T_Dataset
 from attention_visualization import AttentionVisualizer
 
 
@@ -110,7 +110,7 @@ class ModelAnalyzer:
         
         # 加载数据集
         try:
-            dataset = S2T_Dataset_CSL_Daily(
+            dataset = S2T_Dataset(
                 split='dev',
                 use_descriptions=True,
                 use_desc_feature=True
